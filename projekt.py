@@ -39,7 +39,7 @@ class MainWindow(QMainWindow):
         labels = [
             "Gewindeart", "Teilung P", "Gangzahl n", "Gewindesteigung Ph",
             "Steigungswinkel α", "Außendurchmesser d", "Flankendurchmesser d2",
-            "Kerndurchmesser d3", "Spannungsquerschnitt As", "Spiel im Gewinde as"
+            "Kerndurchmesser d3", "Nenndurchmesser ds", "Spannungsquerschnitt As", "Spiel im Gewinde as"
         ]
 
         # ComboBox for 'Gewindeart'
@@ -101,10 +101,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
