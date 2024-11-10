@@ -39,7 +39,7 @@ class MainWindow(QMainWindow):
         labels = [
             "Gewindeart", "Teilung P", "Gangzahl n", "Gewindesteigung Ph",
             "Steigungswinkel α", "Außendurchmesser d", "Flankendurchmesser d2",
-            "Kerndurchmesser d3", "Nenndurchmesser ds", "Spannungsquerschnitt As", "Spiel im Gewinde as"
+            "Kerndurchmesser d3", "Spannungsquerschnitt As", "Spiel im Gewinde as"
         ]
 
         # ComboBox for 'Gewindeart'
@@ -65,6 +65,21 @@ class MainWindow(QMainWindow):
         diameter_thread_group.setLayout(diameter_thread_layout)
         main_layout.addWidget(diameter_thread_group)
 
+        # Compliance section
+        compliance_group = QGroupBox("Nachgiebigkeit")
+        compliance_layout = QGridLayout()
+
+        # Diagrams with radio buttons
+        radio_layout = QHBoxLayout()
+        for i in range(1, 4):
+            radio_button = QRadioButton(f"Diagram {i}")
+            radio_layout.addWidget(radio_button)
+            self.inputs.append(radio_button)  # Store reference to reset later
+
+        compliance_layout.addLayout(radio_layout, 0, 0, 1, 3)
+
+        compliance_group.setLayout(compliance_layout)
+        main_layout.addWidget(compliance_group)
 
         # Bottom buttons
         button_layout = QHBoxLayout()
@@ -101,3 +116,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
