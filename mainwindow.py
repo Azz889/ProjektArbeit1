@@ -15,7 +15,7 @@ from wirkungsgrad import WirkungsgradWidget
 from nachgiebigkeit import SvgWidget
 
 class PlotWindow(QMainWindow):
-    """Separate window to display the force-displacement plot."""
+    """Separates Fenster zur Anzeige des Kraft-Weg-Diagramms."""
     def __init__(self, kraefte_widget, nachgiebigkeit_widget, delta_s, delta_p, phi, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Kraft-Verschiebungs-Diagramm (Bild 3.27)")
