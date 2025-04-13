@@ -1,43 +1,15 @@
 from PyQt5.QtWidgets import QWidget, QGridLayout, QLabel, QLineEdit, QComboBox, QGroupBox
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal  # Import pyqtSignal
 from PyQt5.QtGui import QDoubleValidator
 from pandas import read_excel
 
 class KraefteWidget(QWidget):
     """
     Klasse zur Berechnung der Schraubenkräfte.
-
-    Args:
-        delta_s (float): Nachgiebigkeit Schraube \u03B4<sub>s</sub>, aus NachgiebigkeitWidget
-        delta_p (float): Nachgiebigkeit Zwischenlage \u03B4<sub>p</sub>, aus NachgiebigkeitWidget
-        Phi (float): Verspannungsfaktor \u03C6, aus NachgiebigkeitWidget
-        F_Mmin (float): Minimale Montagekraft F<sub>Mmin</sub>
-        F_Mmax (float): Maximale Montagekraft F<sub>Mmax</sub>
-        alpha_A (float): Anziehfaktor
-        F_Z (float): Setzkraft F<sub>Z</sub>
-        f_Z (float): Setzbetrag f<sub>Z</sub>
-        F_A (float): Betriebskraft F<sub>A</sub>
-        F_V (float): Vorspannkraft F<sub>V</sub>
-        F_Smax (float): Maximale Schraubenkraft F<sub>Smax</sub>
-        F_SA (float): Schraubenzusatzkraft F<sub>SA</sub>
-        F_KR (float): Restklemmkraft F<sub>KR</sub>
-        F_Ao (float): Obergrenze Dynamischer Betriebsfaktor F<sub>Ao</sub>
-        F_Au (float): Untergrenze Dynamischer Betriebsfaktor F<sub>Au</sub>
-        F_Verf (float): Erforderliche Vorspannkraft F<sub>Verf</sub>
-        F_Kerf (float): Erforderliche Restklemmkraft F<sub>Kerf</sub>
-        F_Q (float): Querkraft F<sub>Q</sub>
-        my (float): Reibwert μ
-        R_Z (float): Gemittelte Rautiefe
-        F_Sm (float): Konstante Mittellast F<sub>Sm</sub>
-        F_Sa (float): Schraubenausschlagskraft F<sub>SAa</sub> \u00B1
-        belastung (str): Zug/Druck, Schub
-        kopf_mutterauflagen (int): Anzahl Kopf- oder Mutterauflagen
-        trennfugen (int): Anzahl innerer Trennfugen
-
-    Attributes:
-        validator (QDoubleValidator): Validator für Eingabefelder. Erlaubt nur Gleitkommazahlen in einem bestimmten Bereich.
-        mainwindow (Parent): Das Elternobjekt, das als Hauptfenster fungiert.
     """
+    # Define the signal to notify when values change
+    valuesChanged = pyqtSignal()
+
     def __init__(self, validator, parent=None):
         """
         Initialisiert das Widget mit einem Validator und einem optionalen Elternobjekt.
@@ -48,7 +20,7 @@ class KraefteWidget(QWidget):
         self.setup_ui()
         for line_edit in self.line_edits.values():
             line_edit.editingFinished.connect(self.calculate)
-        
+
     def setup_ui(self):
         """
         Initialisiert das Benutzeroberflächen-Layout für die Berechnung von Kräften.
@@ -154,24 +126,6 @@ class KraefteWidget(QWidget):
     def add_lineedits(self, index, layout, eingaben):
         """
         Fügt der Benutzeroberfläche die LineEdits aus setup_ui hinzu.
-
-        Args:
-            index (int): Der aktuelle Index in der Layout-Tabelle, um die Position der neuen Widgets anzugeben.
-            layout (QGridLayout): Das Layout, zu dem die LineEdits hinzugefügt werden.
-            eingaben (list): Eine Liste von Listen, die jeweils Informationen zu den LineEdits enthalten.
-                Jede Liste innerhalb von 'eingaben' hat folgendes Format:
-                    - pflicht (int): Gibt an, ob das Eingabefeld ein Pflichtfeld ist (1) oder nicht (0).
-                    - param (str): Der Name des Parameters, der dem LineEdit zugewiesen wird.
-                    - unit (str): Die Einheit des Parameters, die neben dem LineEdit angezeigt wird.
-                    - name (str): Der angezeigte Name des Parameters oder des Eingabefelds.
-                    - verweis (str): Ein Verweis oder eine Erklärung, die als Tooltip für das LineEdit gesetzt wird.
-
-        Die Methode erstellt für jede Liste in 'eingaben' ein Label ('name_label'), ein LineEdit ('line_edit') und ein
-        Label für die Einheit ('unit_label'). Ist der Wert von 'pflicht' (1), wird das Label 'name_label' mit einem roten
-        Sternchen als Pflichtfeld markiert. Der Verweis wird als Tooltip hinzugefügt.
-
-        Die erstellten Widgets werden dem übergebenen 'layout' hinzugefügt und das LineEdit wird zusätzlich in
-        'self.line_edits' gespeichert, wobei der Parametername als Schlüssel verwendet wird.
         """
         for pflicht, param, unit, name, verweis in eingaben:
             index += 1
@@ -194,11 +148,6 @@ class KraefteWidget(QWidget):
     def calculate(self):
         """
         Berechnet verschiedene Parameter basierend auf den Werten der Eingabefelder.
-        Die berechneten Werte werden dann mithilfe der Methode 'set_value' in die noch offenen Felder der Benutzeroberfläche eingetragen.
-        
-        Die berechneten Parameter sind alle in der Klassenbeschreibung aufgelistet.
-        Da viele Parameter von vorherigen Ergebnissen aus anderen Klassen abhängig sind, wird auch die Methode 'calculate' anderer Widgets
-        aufgerufen. Hier von Dauerfestigkeit. 
         """
         delta_s = self.get_value("delta_s")
         delta_p = self.get_value("delta_p")
@@ -400,12 +349,6 @@ class KraefteWidget(QWidget):
     def get_value(self, param):
         """
         Gibt den Wert eines bestimmten Parameters aus den Eingabefeldern zurück.
-
-        Args:
-            param (str): Der Name des Parameters, dessen Wert zurückgegeben werden soll.
-
-        Returns:
-            float: Der Wert des Parameters als float. Wenn das Eingabefeld leer ist, wird None zurückgegeben.
         """
         line_edit = self.line_edits[param]
         text = line_edit.text()
@@ -418,10 +361,6 @@ class KraefteWidget(QWidget):
     def set_value(self, param, value):
         """
         Setzt den Wert eines bestimmten Parameters in den Eingabefeldern.
-
-        Args:
-            param (str): Der Name des Parameters, dessen Wert gesetzt werden soll.
-            value (float or int): Der Wert, der gesetzt werden soll.
         """
         line_edit = self.line_edits[param]
         # Formatieren des Werts mit Komma als Dezimaltrennzeichen
@@ -439,3 +378,4 @@ class KraefteWidget(QWidget):
         else:
             formatted_value = str(value)  # umgang mit andern Types
         line_edit.setText(formatted_value)
+        self.valuesChanged.emit()  # Emit the signal whenever a value is set
