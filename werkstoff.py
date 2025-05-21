@@ -64,29 +64,36 @@ class WerkstoffWidget(QWidget):
         Aktualisiert die entsprechenden Labels mit den berechneten Werten.
         Ruft die Berechnung der Dauerfestigkeit auf.
         """
-        # Diese Funktion wird aufgerufen, wenn die Bearbeitung des festigkeitsklasse_lineedit abgeschlossen ist.
-        
         self.festigkeitsklasse = self.festigkeitsklasse_lineedit.text().replace(',', '.')
-        parts = self.festigkeitsklasse.split('.')
+        if not self.festigkeitsklasse:
+            self.festigkeitsklasse_result_label.setText("")
+            return
+
         try:
-            # Beim Punkt aufteilen
-            if len(parts) == 2:
-                first_part = parts[0]
-                second_part = parts[1]
-            else:
-                first_part = parts[0]
-                second_part = ''
-            
-            # zu integers konvertieren
-            first_part = int(first_part)
-            second_part = int(second_part) if second_part else 0  # Wird Standardmäßig auf 0 gesetzt, wenn kein Dezimalteil vorhanden ist.
-        except ValueError:
+            # Split the festigkeitsklasse (e.g., "12.9" into ["12", "9"])
+            parts = self.festigkeitsklasse.split('.')
+            if len(parts) != 2:
+                raise ValueError("Festigkeitsklasse muss im Format 'X.Y' sein (z.B. 12.9)")
+
+            # Convert to floats
+            first_part = float(parts[0])  # e.g., 12 from "12.9"
+            second_part = float(parts[1])  # e.g., 9 from "12.9"
+
+            # Calculate R_m and R_p02
+            self.R_m = first_part * 100  # e.g., 12 * 100 = 1200
+            self.R_p02 = second_part * 10 * first_part  # e.g., 9 * 10 * 12 = 1080
+
+            # Update the display
+            self.festigkeitsklasse_result_label.setText(
+                f"Nennzugfestigkeit R<sub>m</sub>: {self.R_m:.0f}\n"
+                f"Nennstreckgrenze R<sub>eL/p0,2</sub>: {self.R_p02:.0f}"
+            )
+
+            # Trigger Dauerfestigkeit calculation
+            self.mainwindow.dauerfestigkeit_widget.calculate()
+
+        except ValueError as e:
             self.festigkeitsklasse_result_label.setText("ungültige Eingabe")
-        self.R_m = first_part*100
-        self.R_p02 = second_part*10*first_part
-        self.festigkeitsklasse_result_label.setText(f"Nennzugfestigkeit R<sub>m</sub>: {self.R_m}\nNennstreckgrenze R<sub>eL/p0,2</sub>: {self.R_p02}")
-        # Berechne Dauerfestigkeit da es von R_p02 abhängig ist
-        self.mainwindow.dauerfestigkeit_widget.calculate()
 
     def show_table_popup(self):
         """
