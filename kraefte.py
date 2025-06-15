@@ -1,7 +1,9 @@
-from PyQt5.QtWidgets import QWidget, QGridLayout, QLabel, QLineEdit, QComboBox, QGroupBox
-from PyQt5.QtCore import Qt, pyqtSignal  # Import pyqtSignal
+from PyQt5.QtWidgets import QWidget, QGridLayout, QLabel, QLineEdit, QComboBox, QSplitter, QTreeView
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QDoubleValidator
 from pandas import read_excel
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 class KraefteWidget(QWidget):
     """
@@ -17,6 +19,7 @@ class KraefteWidget(QWidget):
         super().__init__(parent)
         self.validator = validator
         self.mainwindow = parent
+        self.line_edits = {}
         self.setup_ui()
         for line_edit in self.line_edits.values():
             line_edit.editingFinished.connect(self.calculate)
@@ -28,12 +31,24 @@ class KraefteWidget(QWidget):
         """
         self.line_edits = {}
 
+        # Main splitter for file structure and force widget
+        main_splitter = QSplitter(Qt.Horizontal)
         layout = QGridLayout(self)
+        layout.addWidget(main_splitter)
 
-        # Erstellen des Scrollbereichs
+        # File structure (left panel)
+        from PyQt5.QtWidgets import QFileSystemModel
+        file_model = QFileSystemModel()
+        file_model.setRootPath("")  # Set to your project directory (e.g., "PROJEKTARBEIT1-MAIN1")
+        tree_view = QTreeView()
+        tree_view.setModel(file_model)
+        tree_view.setRootIndex(file_model.index("PROJEKTARBEIT1-MAIN1"))  # Adjust path to your project
+        main_splitter.addWidget(tree_view)
+
+        # Scroll content for force calculations (right panel)
         scroll_content = QWidget()
         scroll_layout = QGridLayout(scroll_content)
-        layout.addWidget(scroll_content)
+        main_splitter.addWidget(scroll_content)
 
         title = QLabel("""<p style="font-size:12pt;">Kräfte</p>""")
         scroll_layout.addWidget(title)
@@ -43,9 +58,9 @@ class KraefteWidget(QWidget):
         scroll_layout.addWidget(subtitle_alpha_A)
 
         # Anziehfaktor alpha_A Comboboxes
-        alpha_a_label = QLabel('<span style="color: red;">*</span> ' +"Anziehfaktor auswählen")
+        alpha_a_label = QLabel('<span style="color: red;">*</span> ' + "Anziehfaktor auswählen")
         self.alpha_a = QComboBox()
-        alpha_a_2_label = QLabel('<span style="color: red;">*</span> ' +"Berechnung für")
+        alpha_a_2_label = QLabel('<span style="color: red;">*</span> ' + "Berechnung für")
         self.alpha_a_2 = QComboBox()
         self.alpha_a_2.addItems(["Anwendungsfall/Sicherheit", "Festigkeit"])
         self.load_alpha_a()
@@ -90,6 +105,7 @@ class KraefteWidget(QWidget):
             [0, "delta_s", "", "Nachgiebigkeit Schraube \u03B4<sub>s</sub>", "Aus Nachgiebigkeit"],
             [0, "delta_p", "", "Nachgiebigkeit Zwischenlage \u03B4<sub>p</sub>", "Aus Nachgiebigkeit"],
             [0, "Phi", "", "Verspannungsfaktor \u03C6", " \u03C6 = \u03B4<sub>p</sub> / (\u03B4<sub>s</sub> + \u03B4<sub>p</sub>)(3.26)"],
+            [0, "Phi_n", "", "Verspannungsfaktor \u03C6<sub>n</sub>", "Verspannungsfaktor für nicht gestützte Verbindung"],
         ])
 
         # Betriebskräfte
@@ -113,9 +129,9 @@ class KraefteWidget(QWidget):
             [0, "F_SA", "N", "Schraubenzusatzkraft F<sub>SA</sub>", "F<sub>SA</sub>=\u03C6*F<sub>A</sub>"],
             [0, "F_PA", "N", "Hilfswert F<sub>PA</sub>", "F<sub>PA</sub>=F<sub>SA</sub>-F<sub>A</sub>"],
             [0, "F_Smax", "N", "Maximale Schraubenkraft F<sub>Smax</sub>", "F<sub>Smax</sub> = F<sub>Mmax</sub> + F<sub>SA</sub> <br>(Bild 3.27,3.25)  <br>F<sub>Smax</sub> = F<sub>KR</sub> + F<sub>A</sub> (Bild 3.26)"],
-            [0, "F_Mmin", "N", "Minimale Montagekraft F<sub>Mmin</sub>", " F<sub>Mmin</sub>=F<sub>Mmax</sub>/\u03B1<sub>A</sub> (3.23) <br> F<sub>Mmin</sub>= F<sub>V</sub>+F<sub>Z</sub> (Bild 3.27)"],
+            [0, "F_Mmin", "N", "Minimale Montagekraft F<sub>Mmin</sub>", " F<sub>Mmin</sub>=F<sub>Mmax</sub>/ \u03B1<sub>A</sub> (3.23) <br> F<sub>Mmin</sub>= F<sub>V</sub>+F<sub>Z</sub> (Bild 3.27)"],
             [0, "F_Mmax", "N", "Maximale Montagekraft F<sub>Mmax</sub>", " F<sub>Mmax</sub>=\u03B1<sub>A</sub>*F<sub>Mmin</sub> (3.23) <br>F<sub>Mmax</sub> = F<sub>Smax</sub> - F<sub>SA</sub> (Bild 3.27)"],
-            [0, "F_Kerf", "N", "Erforderliche Restklemmkraft F<sub>Kerf</sub>", " F<sub>Kerf</sub>=F<sub>Verf</sub>-(1-\u03C6)*F<sub>Ao</sub>(3.30)<br>F<sub>Kerf</sub> = F<sub>Mmin</sub> -F<sub>Z</sub> - (1-\u03C6)*F<sub>Ao</sub> (Bild 3.27)<br> oft =F<sub>Verf</sub>"],
+            [0, "F_Kerf", "N", "Erforderliche Restklemmkraft F<sub>Kerf</sub>", " F<sub>Kerf</sub>=F<sub>Verf</sub>-(1-\u03C6)*F<sub>Ao</sub>(3.30)<br>F<sub>Kerf</sub> = F<sub>Mmin</sub> -F<sub>Z</sub> - (1-\u03C6)*F<sub>Ao</sub> (Bild 3.27)<br> oft =F<sub渣erf</sub>"],
             [0, "F_Verf", "N", "Erforderliche Vorspannkraft F<sub>Verf</sub> ", "F<sub>Verf</sub>=F<sub>Kerf</sub>+(1-\u03C6)*F<sub>Ao</sub> (3.30)"],
             [0, "F_Sm", "N", "Konstante Mittellast F<sub>Sm</sub> ", " F<sub>Sm</sub>=F<sub>V</sub>+\u03C6*(F<sub>Ao</sub>+F<sub>Au</sub>)/2<br> (3.36)"],
             [0, "F_SAa", "N", "Schraubenausschlagskraft F<sub>SAa</sub> \u00B1", "F<sub>SAa</sub> =\u00B1 \u03C6*(F<sub>Ao</sub>-F<sub>Au</sub>)/2 (3.37)"],
@@ -131,12 +147,16 @@ class KraefteWidget(QWidget):
             [0, "c_S", "", "Steigung Schraubenlinie c<sub>S</sub>", "c<sub>S</sub> = ΔF/Δf Schraube"],
             [0, "c_P", "", "Steigung Bauteillinie c<sub>P</sub>", "c<sub>P</sub> = ΔF/Δf Bauteil"],
             [0, "f_SA", "", "Abszisse f<sub>SA</sub>", "Abszisse durch Zusatzkraft Schraube"],
-            # New parameters from the diagram
             [0, "f_V", "", "Verschiebung f bei F<sub>V</sub> (Schraube)", "Verschiebung der Schraube bei Vorspannkraft"],
             [0, "f_Smax_total", "", "Verschiebung f bei F<sub>Smax</sub> (Gesamt)", "Gesamtverschiebung bei maximaler Schraubenkraft"],
         ]
 
         self.add_lineedits(24, scroll_layout, eingaben)
+
+        # Add plot area
+        self.figure = plt.Figure()
+        self.canvas = FigureCanvas(self.figure)
+        scroll_layout.addWidget(self.canvas, 40, 0, 1, 3)  # Adjust row and span as needed
 
     def add_lineedits(self, index, layout, eingaben):
         """
@@ -189,23 +209,22 @@ class KraefteWidget(QWidget):
         kopf_mutterauflagen = self.get_value("kopf_mutterauflagen")
         trennfugen = self.get_value("trennfugen")
         gewinde = self.get_value("gewinde")
-        F = self.get_value("F")  # External force
-        F_S = self.get_value("F_S")  # Additional bolt force
-        F_P = self.get_value("F_P")  # Relief force on parts
-        F_Erv = self.get_value("F_Erv")  # Yield force
-        F_Erf = self.get_value("F_Erf")  # Required force
-        F_PM = self.get_value("F_PM")  # Max clamped parts force
-        Fz = self.get_value("Fz")  # Additional force
-        f_SMmax = self.get_value("f_SMmax")  # Abszisse Schraubenkennlinie
-        f_PMmax = self.get_value("f_PMmax")  # Abszisse Bauteilkennlinie
-        c_S = self.get_value("c_S")  # Steigung Schraubenlinie
-        c_P = self.get_value("c_P")  # Steigung Bauteillinie
-        f_SA = self.get_value("f_SA")  # Abszisse Zusatzkraft Schraube
-        f_V = self.get_value("f_V")  # New: Displacement at F_V (Schraube)
-        f_Smax_total = self.get_value("f_Smax_total")  # New: Displacement at F_Smax (Gesamt)
+        F = self.get_value("F")
+        F_S = self.get_value("F_S")
+        F_P = self.get_value("F_P")
+        F_Erv = self.get_value("F_Erv")
+        F_Erf = self.get_value("F_Erf")
+        F_PM = self.get_value("F_PM")
+        Fz = self.get_value("Fz")
+        f_SMmax = self.get_value("f_SMmax")
+        f_PMmax = self.get_value("f_PMmax")
+        c_S = self.get_value("c_S")
+        c_P = self.get_value("c_P")
+        f_SA = self.get_value("f_SA")
+        f_V = self.get_value("f_V")
+        f_Smax_total = self.get_value("f_Smax_total")
 
         for i in range(3):
-            # alpha_A F_Mmin F_Mmax Dreieck
             if alpha_A is not None and alpha_A != 0 and F_Mmax is not None:
                 F_Mmin = F_Mmax / alpha_A
                 self.set_value("F_Mmin", F_Mmin)
@@ -221,10 +240,9 @@ class KraefteWidget(QWidget):
                     F_Z = f_Z * 0.001 / (delta_s + delta_p)
                     self.set_value("F_Z", F_Z)
 
-            # F_KR, F_V, F_A, F_SA, F_PA
             if Phi is not None and (F_A is not None or F_Ao is not None) and F_Z is not None and F_KR is not None:
                 if F_A is not None:
-                    F_V = F_KR + (1 - Phi) * F_A  # Annahme F_KR = F_Kerf
+                    F_V = F_KR + (1 - Phi) * F_A
                     self.set_value("F_V", F_V)
                 elif F_Ao is not None:
                     F_V = F_KR + (1 - Phi) * F_Ao
@@ -246,7 +264,7 @@ class KraefteWidget(QWidget):
                 F_PA = F_A - F_SA
                 self.set_value("F_PA", F_PA)
 
-            if F is not None and Phi is not None:  # Calculate F_S and F_P
+            if F is not None and Phi is not None:
                 F_S = Phi * F
                 F_P = (1 - Phi) * F
                 self.set_value("F_S", F_S)
@@ -256,7 +274,6 @@ class KraefteWidget(QWidget):
                 F_V = F_Mmin - F_Z
                 self.set_value("F_V", F_V)
 
-            # F_Mmin aus F_Z und F_V/Verf
             if F_V is not None and F_Z is not None:
                 F_Mmin = F_V + F_Z
                 self.set_value("F_Mmin", F_Mmin)
@@ -273,36 +290,32 @@ class KraefteWidget(QWidget):
                 F_KR = F_Smax - F_A
                 self.set_value("F_KR", F_KR)
 
-            # F_SAa
             if Phi is not None and F_Ao is not None and F_Au is not None:
                 F_SAa = Phi * (F_Ao - F_Au) / 2
                 self.set_value("F_SAa", F_SAa)
 
-            # F_Sm
             if Phi is not None and F_V is not None and F_Ao is not None and F_Au is not None:
                 F_Sm = F_V + Phi * (F_Ao + F_Au) / 2
                 self.set_value("F_Sm", F_Sm)
 
-            # F_Kerf
             if F_Mmin is not None and F_Z is not None and F_A is not None and Phi is not None:
                 F_Kerf = F_Mmin - F_Z - (1 - Phi) * F_A
                 self.set_value("F_Kerf", F_Kerf)
             elif F_Verf is not None and Phi is not None and F_Ao is not None:
                 F_Kerf = F_Verf - (1 - Phi) * F_Ao
                 self.set_value("F_Kerf", F_Kerf)
-            elif F_Verf is not None and F_Ao == 0:  # Falls F_Ao = 0
+            elif F_Verf is not None and F_Ao == 0:
                 F_Kerf = F_Verf
                 self.set_value("F_Kerf", F_Kerf)
                 self.set_value("F_Verf", F_Kerf)
 
-            # F_Verf
             if F_Kerf is not None and Phi is not None and F_Ao is not None:
                 F_Verf = F_Kerf + (1 - Phi) * F_Ao
                 self.set_value("F_Verf", F_Verf)
             elif my is not None and F_Q is not None:
                 F_Verf = F_Q / my
                 self.set_value("F_Verf", F_Verf)
-                self.set_value("F_Kerf", F_Verf)  # Klausur Annahme F_Kerf = F_Verf
+                self.set_value("F_Kerf", F_Verf)
 
             if R_Z is not None and gewinde is not None and kopf_mutterauflagen is not None and trennfugen is not None:
                 f_ZF = {
@@ -311,7 +324,6 @@ class KraefteWidget(QWidget):
                     3: {"Zug/Druck": [3, 4, 3], "Schub": [3, 6.5, 3.5]}
                 }
 
-                # Bestimme den Index basierend auf R_Z
                 if R_Z < 10:
                     index = 1
                 elif R_Z < 40:
@@ -322,65 +334,155 @@ class KraefteWidget(QWidget):
                     print("Ungültige Rautiefe")
                     return None
 
-                # Hole die Werte aus dem f_ZF-dictionary
                 f_Z_values = f_ZF[index][belastung]
-
-                # Berechnet f_Z
                 f_Z = f_Z_values[0] * gewinde + f_Z_values[1] * kopf_mutterauflagen + f_Z_values[2] * trennfugen
                 self.set_value("f_Z", f_Z)
 
-            # Calculate F_PM and Fz
             if F_Mmax is not None and F_SA is not None:
                 F_PM = F_Mmax - F_SA
                 self.set_value("F_PM", F_PM)
 
             if F_Z is not None:
-                Fz = F_Z  # Assuming Fz is related to F_Z as an additional force
+                Fz = F_Z
                 self.set_value("Fz", Fz)
 
-            # Placeholder for F_Erv and F_Erf (requires material data or external input)
             if F_Smax is not None and F_Erv is None:
-                F_Erv = 1.5 * F_Smax  # Example: Yield force as 1.5 times max bolt force
+                F_Erv = 1.5 * F_Smax
                 self.set_value("F_Erv", F_Erv)
 
             if F_Kerf is not None:
-                F_Erf = F_Kerf  # Assuming F_Erf is the required force, often equal to F_Kerf
+                F_Erf = F_Kerf
                 self.set_value("F_Erf", F_Erf)
 
-            # Calculations for f_SMmax, f_PMmax, c_S, c_P, f_SA
             if F_Smax is not None and delta_s is not None and delta_s != 0:
-                f_SMmax = F_Smax * delta_s  # Abszisse Schraubenkennlinie (displacement)
+                f_SMmax = F_Smax * delta_s
                 self.set_value("f_SMmax", f_SMmax)
 
             if F_Mmax is not None and delta_p is not None and delta_p != 0:
-                f_PMmax = F_Mmax * delta_p  # Abszisse Bauteilkennlinie (displacement)
+                f_PMmax = F_Mmax * delta_p
                 self.set_value("f_PMmax", f_PMmax)
 
             if F_Smax is not None and f_SMmax is not None and f_SMmax != 0:
-                c_S = F_Smax / f_SMmax  # Steigung Schraubenlinie (stiffness)
+                c_S = F_Smax / f_SMmax
                 self.set_value("c_S", c_S)
 
             if F_Mmax is not None and f_PMmax is not None and f_PMmax != 0:
-                c_P = F_Mmax / f_PMmax  # Steigung Bauteillinie (stiffness)
+                c_P = F_Mmax / f_PMmax
                 self.set_value("c_P", c_P)
 
             if F_SA is not None and delta_s is not None and delta_s != 0:
-                f_SA = F_SA * delta_s  # Abszisse durch Zusatzkraft Schraube
+                f_SA = F_SA * delta_s
                 self.set_value("f_SA", f_SA)
 
-            # New: Calculate f_V (Displacement at F_V for the bolt)
             if F_V is not None and delta_s is not None and delta_s != 0:
-                f_V = F_V * delta_s  # Displacement at preload for the bolt
+                f_V = F_V * delta_s
                 self.set_value("f_V", f_V)
 
-            # New: Calculate f_Smax_total (Displacement at F_Smax for the total system)
-            # Assuming it's the same as f_SMmax (bolt displacement at F_Smax) for now
             if F_Smax is not None and delta_s is not None and delta_s != 0:
-                f_Smax_total = F_Smax * delta_s  # For now, same as f_SMmax
+                f_Smax_total = F_Smax * delta_s
                 self.set_value("f_Smax_total", f_Smax_total)
 
-        # Berechen Dauerfestigkeit da es von my und Kräften abhängig ist
         self.mainwindow.dauerfestigkeit_widget.calculate()
+        self.update_plot()
+
+    def update_plot(self):
+        """
+        Updates the Matplotlib plot with the calculated force-displacement diagram.
+        Force (F) is on the X-axis (bottom) and displacement (f) is on the Y-axis (left).
+        """
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+
+        # Get calculated values with fallbacks
+        delta_s = self.get_value("delta_s") or 0
+        delta_p = self.get_value("delta_p") or 0
+        Phi = self.get_value("Phi") or 0
+        f_Z = self.get_value("f_Z") or 0
+        F_V = self.get_value("F_V") or 0
+        F_Smax = self.get_value("F_Smax") or 0
+        F_KR = self.get_value("F_KR") or 0
+        F_Mmin = self.get_value("F_Mmin") or 0  # Fixed: Replaced Platelet with F_Mmin
+        F_Mmax = self.get_value("F_Mmax") or 0
+        F_SA = self.get_value("F_SA") or 0
+        F_PA = self.get_value("F_PA") or 0
+        F_A = self.get_value("F_A") or 0
+        F_Kerf = self.get_value("F_Kerf") or 0
+        f_SMmax = self.get_value("f_SMmax") or (F_Smax * delta_s if delta_s else 0)
+        f_PMmax = self.get_value("f_PMmax") or (F_Mmax * delta_p if delta_p else 0)
+        f_SA = self.get_value("f_SA") or (F_SA * delta_s if delta_s else 0)
+        f_V = self.get_value("f_V") or (F_V * delta_s if delta_s else 0)
+        f_Smax_total = self.get_value("f_Smax_total") or f_SMmax
+
+        # Plot spring characteristics with force on X-axis and displacement on Y-axis
+        ax.plot([0, f_SMmax], [0, F_Smax], 'b-', label='Schraube (c_S)')
+        ax.plot([0, f_PMmax], [0, F_Mmax], 'r-', label='Bauteil (c_P)')
+        ax.plot([f_V, f_Smax_total], [F_V, F_Smax], 'b-')  # Extended bolt line
+        ax.plot([f_Z, f_PMmax], [0, F_Mmax], 'r-')  # Extended part line
+
+        # Intersection point at (f_V, F_V)
+        ax.plot(f_V, F_V, 'ko', label='Schnittpunkt')  # Initial contact point
+
+        # Define forces to annotate with horizontal arrows at the bottom
+        forces = [
+            (F_A, 'F_A'),
+            (F_Smax, 'F_Smax'),
+            (F_SA, 'F_SA'),
+            (F_Kerf, 'F_Kerf'),
+            (F_V, 'F_V'),
+        ]
+
+        # Add horizontal arrow annotations at the bottom of the plot
+        max_y = max(f_SMmax, f_PMmax, 1) * 1.1
+        min_force = min([f for f, _ in forces if f is not None and f > 0], default=0)
+        max_force = max([f for f, _ in forces if f is not None], default=1)
+        
+        # Add a small offset for the arrows to be below the X-axis
+        arrow_y = -max_y * 0.05
+        
+        for force, label in forces:
+            if force is not None and force > 0:  # Only plot positive forces
+                # Add horizontal arrow pointing to the force value
+                ax.annotate(
+                    label,
+                    xy=(0, arrow_y),  # Start at left side at arrow_y
+                    xytext=(force, arrow_y),  # Extend to force value at arrow_y
+                    textcoords='data',
+                    ha='center',
+                    va='top',
+                    arrowprops=dict(
+                        arrowstyle='-|>',
+                        color='black',
+                        lw=1.5,
+                        shrinkA=0,
+                        shrinkB=0,
+                        connectionstyle='arc3,rad=0',
+                    ),
+                    bbox=dict(boxstyle="round,pad=0.1", fc="white", ec="none")
+                )
+                # Add a small vertical line at the force position
+                ax.axvline(x=0, ymin=0, ymax=arrow_y/max_y, color='black', linestyle='-', linewidth=0.5)
+                ax.plot(0, arrow_y, 'k|', markersize=8)  # Marker at the start of arrow
+                ax.plot(force, arrow_y, 'k>', markersize=8)  # Arrow head at the force value
+
+        # Labels and limits
+        ax.set_ylabel('Verschiebung f (mm)')
+        ax.set_xlabel('Kraft F (N)')
+        ax.legend(loc='upper left')
+        ax.grid(True)
+        
+        # Set axis limits with some padding
+        ax.set_xlim(-max_y * 0.1, max_y * 1.1)
+        ax.set_ylim(arrow_y * 1.5, max([F_Smax, F_Mmax, 1]) * 1.1)
+        
+        # Hide the bottom spine where we're drawing arrows
+        ax.spines['bottom'].set_visible(False)
+        ax.xaxis.set_ticks_position('top')
+        ax.xaxis.set_label_position('top')
+        
+        # Add a horizontal line at y=0
+        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+
+        self.canvas.draw()
 
     def update_delta_values(self, delta_s, delta_p, Phi):
         """
@@ -399,7 +501,6 @@ class KraefteWidget(QWidget):
         items = df.iloc[1:, 0].tolist()
         tooltips = df.iloc[1:, 1].tolist()
 
-        # Setzt die Elemente und Tooltips in die QComboBox
         for item, tooltip in zip(items, tooltips):
             self.alpha_a.addItem(item)
             index = self.alpha_a.findText(item)
@@ -411,7 +512,6 @@ class KraefteWidget(QWidget):
         """
         range_str = self.alpha_a.currentText().replace(',', '.')
         parts = range_str.split(' bis ')
-        # Konvertiere die Zahlen in Gleitkommazahlen
         if len(parts) == 2:
             lower_range = float(parts[0])
             upper_range = float(parts[1])
@@ -427,11 +527,21 @@ class KraefteWidget(QWidget):
         Gibt den Wert eines bestimmten Parameters aus den Eingabefeldern zurück.
         """
         line_edit = self.line_edits[param]
-        text = line_edit.text()
+        text = line_edit.text().strip()
         if text:
-            # Ersetze das Komma durch einen Punkt für die korrekte Gleitkommazahlen-Konvertierung
-            text = text.replace(',', '.')
-            return float(text)
+            if '*' in text and '-' in text:
+                try:
+                    base, exponent = text.split('*')
+                    base = float(base)
+                    exp = int(exponent.replace('-', ''))
+                    return base * (10 ** -exp)
+                except ValueError:
+                    pass
+            text = text.replace(',', '.').replace('e', 'E')
+            try:
+                return float(text)
+            except ValueError:
+                return None
         return None
 
     def set_value(self, param, value):
@@ -439,19 +549,13 @@ class KraefteWidget(QWidget):
         Setzt den Wert eines bestimmten Parameters in den Eingabefeldern.
         """
         line_edit = self.line_edits[param]
-        # Formatieren des Werts mit Komma als Dezimaltrennzeichen
-        if isinstance(value, int):
-            formatted_value = str(value)
-        elif isinstance(value, float):
-            # Wissenschaftliche Notation für sehr kleine oder sehr große Werte
+        if isinstance(value, (int, float)):
             if abs(value) < 1e-3 or abs(value) > 1e4:
                 formatted_value = f"{value:.4e}".replace('e', 'E')
             else:
-                # Formatiert Werte mit bis zu vier Dezimalstellen und entfernt unnötige Nullen.
                 formatted_value = f"{value:.4f}".rstrip('0').rstrip('.')
-            # Ersetzen Sie den Punkt durch ein Komma als Dezimaltrennzeichen.
             formatted_value = formatted_value.replace('.', ',')
         else:
-            formatted_value = str(value)  # Umgang mit anderen Typen
+            formatted_value = str(value)
         line_edit.setText(formatted_value)
-        self.valuesChanged.emit()  # Emit the signal whenever a value is set
+        self.valuesChanged.emit()
