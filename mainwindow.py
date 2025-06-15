@@ -24,7 +24,7 @@ class PlotWindow(QMainWindow):
         self.nachgiebigkeit_widget = nachgiebigkeit_widget
         self.delta_s = delta_s
         self.delta_p = delta_p
-        self.phi = phi  # Fixed: Changed 'Phi' to 'phi' to match parameter
+        self.phi = phi
 
         # Central widget and layout
         central_widget = QWidget()
@@ -34,13 +34,15 @@ class PlotWindow(QMainWindow):
         self.figure, self.ax = plt.subplots()
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setMinimumHeight(400)
-        layout.addWidget(self.canvas)
-
-        self.setCentralWidget(central_widget)
+        
+        # Calculate values for the plot
         self.update_plot()
-
+        
+        layout.addWidget(self.canvas)
+        self.setCentralWidget(central_widget)
+        
     def update_plot(self):
-        """Updates the force-displacement plot."""
+        """Update the force-displacement diagram with displacement on X-axis and force on Y-axis."""
         self.ax.clear()
 
         try:
@@ -50,80 +52,143 @@ class PlotWindow(QMainWindow):
             F_Mmin = float(self.kraefte_widget.get_value("F_Mmin") or 0)
             F_Mmax = float(self.kraefte_widget.get_value("F_Mmax") or 0)
             F_V = float(self.kraefte_widget.get_value("F_V") or 0)
-            F_Z = float(self.kraefte_widget.get_value("F_Z") or 0)
             F_Smax = float(self.kraefte_widget.get_value("F_Smax") or 0)
             F_SA = float(self.kraefte_widget.get_value("F_SA") or 0)
 
             # Use provided delta values
             delta_s = self.delta_s if self.delta_s != 0 else 1e-6
             delta_p = self.delta_p if self.delta_p != 0 else 1e-6
-            Phi = self.phi  # Fixed: Changed 'self.Phi' to 'self.phi'
+            Phi = self.phi
 
             # Calculate additional forces
             F_SA = Phi * F_A
             F_PA = (1 - Phi) * F_A
-            F_Smax = F_V + F_SA
+            F_KR = F_V - (1 - Phi) * F_A  # Restklemmkraft
+            F_Smax = F_V + F_SA  # Ensure F_Smax is consistent
 
-            # Calculate points for the diagram
-            f_s = np.array([0, F_Smax * delta_s])
-            F_s = np.array([0, F_Smax])
-            f_p = np.array([0, (F_Smax - F_V) * delta_p])
-            F_p = np.array([F_V, F_Smax])
+            # Calculate displacements using the compliances
+            f_s_max = F_Smax * delta_s  # Displacement for screw at F_Smax
+            f_p_max = F_Mmax * delta_p  # Displacement for clamped parts at F_Mmax
+            f_v = F_V * delta_s  # Displacement at preload force
             delta_ges = delta_s + delta_p
-            f_ges = np.array([0, F_Smax * delta_ges])
-            F_ges = np.array([0, F_Smax])
+            f_smax_total = F_Smax * delta_ges  # Total displacement at F_Smax
 
-            # Plot lines
-            self.ax.plot(f_s, F_s, label="Schraube (F_S)", color="blue", linewidth=2)
-            self.ax.plot(f_p, F_p, label="Bauteile (F_P)", color="green", linewidth=2)
-            self.ax.plot(f_ges, F_ges, label="Gesamt (F_ges)", color="red", linestyle="--", linewidth=2)
+            # Plot spring characteristics with displacement on X-axis and force on Y-axis
+            # Schraube (screw) line - blue
+            self.ax.plot([0, f_s_max], [0, F_Smax], 'b-', linewidth=2, label='Schraube (cₛ)')
+            
+            # Bauteil (part) line - red
+            self.ax.plot([0, f_p_max], [0, F_Mmax], 'r-', linewidth=2, label='Bauteil (cₚ)')
+            
+            # Extended Schraube line (dashed)
+            self.ax.plot([f_v, f_smax_total], [F_V, F_Smax], 'b--', linewidth=1.5)
+            
+            # Calculate additional points for better visualization
+            max_displacement = max(f_s_max, f_p_max, f_smax_total, 1e-6)
+            x_annotate = max_displacement * 1.1  # Position for annotations on the right
+            
+            # Define all forces to display with their styles and labels
+            forces = [
+                {'name': 'F_A', 'value': F_A, 'color': 'green', 'linestyle': '--', 'alpha': 0.7,
+                 'label': 'Betriebskraft'},
+                {'name': 'F_Kerf', 'value': F_Kerf, 'color': 'purple', 'linestyle': ':', 'alpha': 0.7,
+                 'label': 'Erforderliche Klemmkraft'},
+                {'name': 'F_Mmin', 'value': F_Mmin, 'color': 'orange', 'linestyle': '--', 'alpha': 0.7,
+                 'label': 'Min. Montagekraft'},
+                {'name': 'F_Mmax', 'value': F_Mmax, 'color': 'red', 'linestyle': '-', 'alpha': 0.9,
+                 'label': 'Max. Montagekraft'},
+                {'name': 'F_V', 'value': F_V, 'color': 'black', 'linestyle': '-', 'alpha': 0.8,
+                 'label': 'Vorspannkraft'},
+                {'name': 'F_Smax', 'value': F_Smax, 'color': 'blue', 'linestyle': '-', 'alpha': 0.8,
+                 'label': 'Max. Schraubenkraft'},
+                {'name': 'F_SA', 'value': F_SA, 'color': 'teal', 'linestyle': '--', 'alpha': 0.7,
+                 'label': 'Schraubenzusatzkraft'},
+                {'name': 'F_KR', 'value': F_KR, 'color': 'brown', 'linestyle': ':', 'alpha': 0.7,
+                 'label': 'Restklemmkraft'}
+            ]
+            
+            # Calculate max_force before using it
+            max_force = max((force['value'] for force in forces), default=1)
+            
+            # Calculate positions for vertical lines (evenly spaced across the plot width)
+            num_forces = sum(1 for f in forces if f['value'] > 0)
+            x_positions = np.linspace(0.1 * max_displacement, 0.9 * max_displacement, num_forces) if num_forces > 0 else []
+            
+            # Plot vertical lines for each force
+            force_idx = 0
+            for i, force in enumerate(forces):
+                if force['value'] > 0:  # Only plot positive forces
+                    # Calculate position for this force
+                    x_pos = x_positions[force_idx] if force_idx < len(x_positions) else max_displacement * 0.5
+                    force_idx += 1
+                    
+                    # Draw vertical line
+                    self.ax.axvline(x=x_pos, ymin=0, ymax=force['value']/max_force, 
+                                 color=force['color'], linestyle=force['linestyle'], 
+                                 alpha=force['alpha'], 
+                                 label=f"{force['name']}: {force['label']}")
+                    
+                    # Add label at the top of the line
+                    self.ax.text(x_pos, force['value'], 
+                               f"{force['name']} = {force['value']:.1f} N",
+                               ha='center', va='bottom', rotation=90,
+                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.2'))
+                    
+                    # Add a small horizontal line at the top
+                    self.ax.hlines(y=force['value'], xmin=x_pos-0.05*max_displacement, 
+                                 xmax=x_pos+0.05*max_displacement, 
+                                 color=force['color'], alpha=0.7)
+            
+            # Mark important points
+            points = [
+                {'x': 0, 'y': 0, 'label': 'Ursprung', 'color': 'black'},
+                {'x': f_v, 'y': F_V, 'label': f'Schnittpunkt\nF_V = {F_V:.1f} N', 'color': 'red'},
+                {'x': f_s_max, 'y': F_Smax, 'label': f'F_Smax = {F_Smax:.1f} N', 'color': 'blue'},
+                {'x': f_p_max, 'y': F_Mmax, 'label': f'F_Mmax = {F_Mmax:.1f} N', 'color': 'red'}
+            ]
+            
+            for point in points:
+                self.ax.plot(point['x'], point['y'], 'o', color=point['color'], markersize=8)
+                self.ax.annotate(
+                    point['label'],
+                    xy=(point['x'], point['y']),
+                    xytext=(10, 10),
+                    textcoords='offset points',
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.8)
+                )
+            
+            # Add vertical line at F_V to show the working point
+            self.ax.axvline(x=f_v, color='gray', linestyle='--', alpha=0.5)
+            
+            # Add shaded areas for better visualization
+            self.ax.fill_between([0, f_v], [0, F_V], [F_V, F_V], 
+                               color='blue', alpha=0.1, label='Arbeitsbereich Schraube')
+            self.ax.fill_between([0, f_v], [F_V, F_V], [F_V + F_PA, F_V + F_PA], 
+                               color='red', alpha=0.1, label='Arbeitsbereich Bauteil')
 
-            # Force colors
-            force_colors = {
-                "F_A": "purple", "F_Kerf": "orange", "F_Mmin": "cyan", "F_Mmax": "magenta",
-                "F_V": "black", "F_Smax": "brown", "F_Z": "pink", "F_SA": "lime"
-            }
-
-            # Plot horizontal force lines
-            forces = {
-                "F_A": F_A, "F_Kerf": F_Kerf, "F_Mmin": F_Mmin, "F_Mmax": F_Mmax,
-                "F_V": F_V, "F_Smax": F_Smax, "F_Z": F_Z, "F_SA": F_SA
-            }
-            xlim = self.ax.get_xlim() if self.ax.get_xlim() != (0, 1) else (0, max(f_s[-1], f_p[-1], f_ges[-1], 1e-6))
-            x = np.array([xlim[0], xlim[1]])
-
-            for force_name, force_value in forces.items():
-                if force_value > 0:
-                    self.ax.plot(x, [force_value, force_value],
-                                 label=f"{force_name} = {force_value:.2f} N",
-                                 color=force_colors[force_name], linestyle=":", linewidth=1.5)
-
-            # Vertical lines
-            if F_V > 0:
-                self.ax.axvline(F_V * delta_s, color="gray", linestyle=":", label=f"f at F_V (Schraube)")
-            if F_Smax > 0:
-                self.ax.axvline(F_Smax * delta_ges, color="gray", linestyle=":", label=f"f at F_Smax (Gesamt)")
-
-            # Annotations
-            if F_SA > 0:
-                self.ax.annotate('', xy=(F_Smax * delta_s, F_V + F_SA), xytext=(F_Smax * delta_s, F_V),
-                                 arrowprops=dict(arrowstyle='<->', color='black'))
-                self.ax.text(F_Smax * delta_s - 0.05 * (xlim[1] - xlim[0]), (F_V + F_V + F_SA) / 2,
-                             f'F_SA = {F_SA:.2f} N', verticalalignment='center', horizontalalignment='right')
-            if F_PA > 0:
-                self.ax.annotate('', xy=((F_Smax - F_V) * delta_p, F_V + F_PA), xytext=((F_Smax - F_V) * delta_p, F_V),
-                                 arrowprops=dict(arrowstyle='<->', color='black'))
-                self.ax.text(((F_Smax - F_V) * delta_p) - 0.05 * (xlim[1] - xlim[0]), (F_V + F_V + F_PA) / 2,
-                             f'F_PA = {F_PA:.2f} N', verticalalignment='center', horizontalalignment='right')
-
-            # Labels and legend
-            self.ax.set_xlabel("Verschiebung f [mm]")
-            self.ax.set_ylabel("Kraft F [N]")
-            self.ax.set_title("Kraft-Verschiebungs-Diagramm")
-            self.ax.legend(loc="center right", bbox_to_anchor=(1.35, 0.5), fontsize=8)
+            # Set axis labels and legend
+            self.ax.set_xlabel('Verschiebung f [mm]')
+            self.ax.set_ylabel('Kraft F [N]')
+            self.ax.legend(loc='upper right', bbox_to_anchor=(1.0, 1.0), 
+                         frameon=True, framealpha=0.9)
+            
+            # Set grid and axis limits
+            self.ax.grid(True, linestyle='--', alpha=0.6)
+            self.ax.set_xlim(0, max_displacement * 1.2)
+            # Get the maximum force value from the list of force dictionaries
+            max_force = max((force['value'] for force in forces), default=1)
+            self.ax.set_ylim(0, max_force * 1.2)
+            
+            # Configure spines
+            for spine in ['top', 'right']:
+                self.ax.spines[spine].set_visible(False)
+                
+            # Add title
+            self.ax.set_title('Kraft-Verschiebungs-Diagramm (Bild 3.27)', pad=20, fontsize=12)
+            
+            # Adjust layout
             self.figure.tight_layout()
-            self.figure.subplots_adjust(right=0.75)
-            self.ax.grid(True)
+
             self.canvas.draw()
 
         except (ValueError, TypeError):
@@ -313,15 +378,27 @@ class MainWindow(QMainWindow):
         """
         Updates the corresponding widget value when an input field is changed.
         """
+        if not text.strip():
+            # If the field is empty, set the value to 0 and update the widget
+            value = 0.0
+        else:
+            try:
+                # Try to convert the text to a float, using dot as decimal separator
+                value = float(text.replace(',', '.'))
+            except ValueError:
+                # If conversion fails, don't update the value
+                return
+        
+        # Update the appropriate widget with the new value
         try:
-            value = float(text.replace(',', '.')) if text else 0
             if var in ["delta_s", "delta_p", "Phi"]:
                 self.nachgiebigkeit_widget.set_value(var, value)
             else:
                 self.kraefte_widget.set_value(var, value)
-            self.calculate()  # Recalculate to update dependent values
-        except ValueError:
-            pass  # Ignore invalid input
+            # Recalculate to update dependent values
+            self.calculate()
+        except Exception as e:
+            print(f"Error updating value: {e}")  # Debugging output
 
     def update_input_fields(self):
         """
