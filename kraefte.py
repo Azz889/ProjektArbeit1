@@ -414,8 +414,8 @@ class KraefteWidget(QWidget):
         f_Smax_total = self.get_value("f_Smax_total") or f_SMmax
 
         # Plot spring characteristics with force on X-axis and displacement on Y-axis
-        ax.plot([0, f_SMmax], [0, F_Smax], 'b-', label='Schraube (c_S)')
-        ax.plot([0, f_PMmax], [0, F_Mmax], 'r-', label='Bauteil (c_P)')
+        ax.plot([0, f_SMmax], [0, F_Smax], 'b-', label='Cs (Schraube)')
+        ax.plot([0, f_PMmax], [0, F_Mmax], 'r-', label='Cp (Bauteil)')
         ax.plot([f_V, f_Smax_total], [F_V, F_Smax], 'b-')  # Extended bolt line
         ax.plot([f_Z, f_PMmax], [0, F_Mmax], 'r-')  # Extended part line
 
