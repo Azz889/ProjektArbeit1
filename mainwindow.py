@@ -74,11 +74,11 @@ class PlotWindow(QMainWindow):
             f_smax_total = F_Smax * delta_ges  # Total displacement at F_Smax
 
             # Plot spring characteristics with displacement on X-axis and force on Y-axis
-            # Schraube (screw) line - blue
-            self.ax.plot([0, f_s_max], [0, F_Smax], 'b-', linewidth=2, label='Schraube (cₛ)')
+            # Schraube (screw) line - blue - fixed from origin
+            self.ax.plot([0, f_s_max], [0, F_Smax], 'b-', linewidth=2, label=f'Cs = {1/delta_s:.2e} 1/Nmm')
             
-            # Bauteil (part) line - red
-            self.ax.plot([0, f_p_max], [0, F_Mmax], 'r-', linewidth=2, label='Bauteil (cₚ)')
+            # Bauteil (part) line - red - fixed from origin
+            self.ax.plot([0, f_p_max], [0, F_Mmax], 'r-', linewidth=2, label=f'Cp = {1/delta_p:.2e} 1/Nmm')
             
             # Extended Schraube line (dashed)
             self.ax.plot([f_v, f_smax_total], [F_V, F_Smax], 'b--', linewidth=1.5)
@@ -107,44 +107,57 @@ class PlotWindow(QMainWindow):
                  'label': 'Restklemmkraft'}
             ]
             
-            # Calculate max_force before using it
+            # Sort forces by value in descending order (biggest first)
+            forces = [f for f in forces if f['value'] > 0]  # Only keep positive forces
+            forces.sort(key=lambda x: x['value'], reverse=True)
+            
+            # Calculate max_force and max_displacement for scaling
             max_force = max((force['value'] for force in forces), default=1)
             
-            # Calculate positions for vertical lines (evenly spaced across the plot width)
-            num_forces = sum(1 for f in forces if f['value'] > 0)
-            x_positions = np.linspace(0.1 * max_displacement, 0.9 * max_displacement, num_forces) if num_forces > 0 else []
+            # Calculate positions for arrows (from right to left, spaced evenly)
+            num_forces = len(forces)
+            if num_forces > 0:
+                x_positions = np.linspace(0.9 * max_displacement, 0.1 * max_displacement, num_forces)
+            else:
+                x_positions = []
             
-            # Plot vertical lines for each force
-            force_idx = 0
-            for i, force in enumerate(forces):
-                if force['value'] > 0:  # Only plot positive forces
-                    # Calculate position for this force
-                    x_pos = x_positions[force_idx] if force_idx < len(x_positions) else max_displacement * 0.5
-                    force_idx += 1
-                    
-                    # Draw vertical line
-                    self.ax.axvline(x=x_pos, ymin=0, ymax=force['value']/max_force, 
-                                 color=force['color'], linestyle=force['linestyle'], 
-                                 alpha=force['alpha'], 
-                                 label=f"{force['name']}: {force['label']}")
-                    
-                    # Add label at the top of the line
-                    self.ax.text(x_pos, force['value'], 
-                               f"{force['name']} = {force['value']:.1f} N",
-                               ha='center', va='bottom', rotation=90,
-                               bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.2'))
-                    
-                    # Add a small horizontal line at the top
-                    self.ax.hlines(y=force['value'], xmin=x_pos-0.05*max_displacement, 
-                                 xmax=x_pos+0.05*max_displacement, 
-                                 color=force['color'], alpha=0.7)
+            # Plot simple vertical lines for each force
+            for i, (force, x_pos) in enumerate(zip(forces, x_positions)):
+                # Draw a simple vertical line from top to bottom
+                self.ax.plot([x_pos, x_pos], [max_force, max_force - force['value']], 
+                           color=force['color'], linewidth=2, alpha=force['alpha'])
+                
+                # Add label next to the line
+                self.ax.text(x_pos + 0.03 * max_displacement, max_force - force['value']/2, 
+                           f"{force['name']} = {force['value']:.1f} N\n{force['label']}",
+                           va='center', ha='left',
+                           bbox=dict(facecolor='white', alpha=0.8, 
+                                   edgecolor=force['color'], boxstyle='round,pad=0.2'))
+            
+            # Add Cp and Cs as red dots with values
+            cp = 1/delta_p if delta_p != 0 else float('inf')
+            cs = 1/delta_s if delta_s != 0 else float('inf')
+            
+            # Plot Cp point (1/delta_p)
+            if delta_p != 0:
+                cp_point = 1/delta_p
+                self.ax.plot(0.05 * max_displacement, cp_point, 'ro', markersize=8, label='Cp (Bauteil)')  # Red dot for Cp
+                self.ax.text(0.05 * max_displacement, cp_point, f' Cp = {cp:.2e} 1/Nmm', 
+                           va='center', ha='left', fontsize=10,
+                           bbox=dict(facecolor='white', alpha=0.8, edgecolor='red', boxstyle='round,pad=0.2'))
+            
+            # Plot Cs point (1/delta_s)
+            if delta_s != 0:
+                cs_point = 1/delta_s
+                self.ax.plot(0.05 * max_displacement, cs_point, 'bo', markersize=8, label='Cs (Schraube)')  # Blue dot for Cs
+                self.ax.text(0.05 * max_displacement, cs_point, f' Cs = {cs:.2e} 1/Nmm', 
+                           va='center', ha='left', fontsize=10,
+                           bbox=dict(facecolor='white', alpha=0.8, edgecolor='blue', boxstyle='round,pad=0.2'))
             
             # Mark important points
             points = [
                 {'x': 0, 'y': 0, 'label': 'Ursprung', 'color': 'black'},
-                {'x': f_v, 'y': F_V, 'label': f'Schnittpunkt\nF_V = {F_V:.1f} N', 'color': 'red'},
-                {'x': f_s_max, 'y': F_Smax, 'label': f'F_Smax = {F_Smax:.1f} N', 'color': 'blue'},
-                {'x': f_p_max, 'y': F_Mmax, 'label': f'F_Mmax = {F_Mmax:.1f} N', 'color': 'red'}
+                {'x': f_v, 'y': F_V, 'label': f'Schnittpunkt\nF_V = {F_V:.1f} N', 'color': 'red'}
             ]
             
             for point in points:
@@ -165,6 +178,8 @@ class PlotWindow(QMainWindow):
                                color='blue', alpha=0.1, label='Arbeitsbereich Schraube')
             self.ax.fill_between([0, f_v], [F_V, F_V], [F_V + F_PA, F_V + F_PA], 
                                color='red', alpha=0.1, label='Arbeitsbereich Bauteil')
+            
+            # Removed top-right arrows as requested
 
             # Set axis labels and legend
             self.ax.set_xlabel('Verschiebung f [mm]')
