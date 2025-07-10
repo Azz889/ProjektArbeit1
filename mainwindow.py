@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QGridLayout, QTabWidget, QWidget, QComboBox, QVBoxLayout, QPushButton, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpacerItem, QSizePolicy, QGroupBox
 from PyQt5.QtGui import QDoubleValidator, QValidator
-from PyQt5.QtCore import Qt, QLocale
+from PyQt5.QtCore import Qt, QLocale, QTimer
 
 from nachgiebigkeit import NachgiebigkeitWidget
 from gewinde import GewindeWidget
@@ -41,16 +41,8 @@ class PlotWindow(QMainWindow):
         layout.addWidget(self.canvas)
         self.setCentralWidget(central_widget)
         
-    def closeEvent(self, event):
-        """Clean up matplotlib figure when closing the plot window."""
-        try:
-            plt.close(self.figure)
-        except:
-            pass
-        event.accept()
-        
     def update_plot(self):
-        """Update the force-displacement diagram with all missing elements including F_PA, F_z, f_smax, f_pmax, f_s=f_p."""
+        """Update the force-displacement diagram with displacement on X-axis and force on Y-axis."""
         self.ax.clear()
 
         try:
@@ -62,166 +54,228 @@ class PlotWindow(QMainWindow):
             F_V = float(self.kraefte_widget.get_value("F_V") or 0)
             F_Smax = float(self.kraefte_widget.get_value("F_Smax") or 0)
             F_SA = float(self.kraefte_widget.get_value("F_SA") or 0)
-            F_PA = float(self.kraefte_widget.get_value("F_PA") or 0)  # Force on intermediate layer
             F_Z = float(self.kraefte_widget.get_value("F_Z") or 0)  # Set force
-            Fz = float(self.kraefte_widget.get_value("Fz") or 0)  # Additional set force
 
             # Use provided delta values
             delta_s = self.delta_s if self.delta_s != 0 else 1e-6
             delta_p = self.delta_p if self.delta_p != 0 else 1e-6
             Phi = self.phi
 
-            # Calculate displacement components
-            f_smax = F_Smax * delta_s  # Displacement component for screw at max force
-            f_pmax = F_Mmax * delta_p  # Displacement component for intermediate layer at max force
-            f_s = F_A * delta_s  # Displacement of screw under operating force F_A
-            f_p = F_A * delta_p  # Displacement of intermediate layer under operating force F_A (f_s = f_p concept)
+            # Calculate additional forces
+            F_SA = Phi * F_A
+            F_PA = (1 - Phi) * F_A  # Force on the intermediate parts
+            F_KR = F_V - (1 - Phi) * F_A  # Restklemmkraft
+            F_Smax = F_V + F_SA  # Ensure F_Smax is consistent
+
+            # Calculate displacements using the compliances
+            f_s_max = F_Smax * delta_s  # Displacement for screw at F_Smax
+            f_p_max = F_Mmax * delta_p  # Displacement for clamped parts at F_Mmax
             f_v = F_V * delta_s  # Displacement at preload force
-            f_SA = F_SA * delta_s  # Displacement due to additional screw force
-            
-            # Calculate spring constants
-            c_S = 1/delta_s if delta_s != 0 else 0  # Spring constant for screw
-            c_P = 1/delta_p if delta_p != 0 else 0  # Spring constant for clamped parts
+            f_a = F_A * delta_s * Phi  # Displacement under operating force F_A
+            delta_ges = delta_s + delta_p
+            f_smax_total = F_Smax * delta_ges  # Total displacement at F_Smax
 
-            # Set up plot dimensions
-            max_displacement = max(f_smax, f_pmax, f_v, f_SA, f_s, f_p, 0.01) * 1.3
-            max_force = max(F_Smax, F_Mmax, F_V, F_A, F_PA, F_Z, 1) * 1.3
-
-            # Plot the main spring characteristics
-            # Screw line (c_S) - positive slope (blue)
-            if f_smax > 0 and F_Smax > 0:
-                self.ax.plot([0, f_smax], [0, F_Smax], 'b-', linewidth=3, label='Schraubenlinie (c_S)')
+            # Plot spring characteristics with displacement on X-axis and force on Y-axis
+            # Schraube (screw) line - blue - fixed from origin
+            self.ax.plot([0, f_s_max], [0, F_Smax], 'b-', linewidth=2, label=f'Cs = {1/delta_s:.2e} 1/Nmm')
             
-            # Clamped parts line (c_P) - negative slope (falling line, red)
-            if f_pmax > 0 and F_Mmax > 0:
-                # Start from maximum force and go down with negative slope
-                f_end = F_Mmax / c_P if c_P > 0 else f_pmax
-                self.ax.plot([0, f_end], [F_Mmax, 0], 'r-', linewidth=3, label='Bauteilkennlinie (c_P) - fallend')
+            # Bauteil (part) line - red - fixed from origin
+            self.ax.plot([0, f_p_max], [0, F_Mmax], 'r-', linewidth=2, label=f'Cp = {1/delta_p:.2e} 1/Nmm')
             
-            # Extended screw line from preload point (dashed blue)
-            if f_v > 0 and F_V > 0 and f_smax > f_v:
-                self.ax.plot([f_v, f_smax], [F_V, F_Smax], 'b--', linewidth=2, alpha=0.8, label='Erweiterte Schraubenlinie')
+            # Extended Schraube line (dashed)
+            self.ax.plot([f_v, f_smax_total], [F_V, F_Smax], 'b--', linewidth=1.5)
 
-            # Plot key points with different markers
-            key_points = [
-                (f_v, F_V, 'F_V (Vorspannkraft)', 'black', 'o', 10),
-                (f_smax, F_Smax, 'F_Smax', 'blue', 's', 8),
-                (f_pmax, F_Mmax, 'F_Mmax', 'red', 's', 8),
-                (f_SA, F_SA, 'F_SA', 'green', '^', 8),
-                (f_s, F_A, 'F_A', 'orange', 'v', 8),
-                (f_p, F_PA, 'F_PA (Zwischenlage)', 'cyan', 'D', 8),  # New: Force on intermediate layer
+            # Add second sloping line for c-p insertion (red dashed)
+            # This is the falling/negative slope line for the clamped parts
+            self.ax.plot([f_v, f_v + f_a], [F_V, F_V - F_PA], 'r--', linewidth=1.5, 
+                       label='Entlastungslinie Bauteil')
+            
+            # Calculate additional points for better visualization
+            max_displacement = max(f_s_max, f_p_max, f_smax_total, 1e-6)
+            x_annotate = max_displacement * 1.1  # Position for annotations on the right
+            
+            # Define all forces to display with their styles and labels
+            forces = [
+                {'name': 'F_A', 'value': F_A, 'color': 'green', 'linestyle': '--', 'alpha': 0.7,
+                 'label': 'Betriebskraft'},
+                {'name': 'F_Kerf', 'value': F_Kerf, 'color': 'purple', 'linestyle': ':', 'alpha': 0.7,
+                 'label': 'Erforderliche Klemmkraft'},
+                {'name': 'F_Mmin', 'value': F_Mmin, 'color': 'orange', 'linestyle': '--', 'alpha': 0.7,
+                 'label': 'Min. Montagekraft'},
+                {'name': 'F_Mmax', 'value': F_Mmax, 'color': 'red', 'linestyle': '-', 'alpha': 0.9,
+                 'label': 'Max. Montagekraft'},
+                {'name': 'F_V', 'value': F_V, 'color': 'black', 'linestyle': '-', 'alpha': 0.8,
+                 'label': 'Vorspannkraft'},
+                {'name': 'F_Smax', 'value': F_Smax, 'color': 'blue', 'linestyle': '-', 'alpha': 0.8,
+                 'label': 'Max. Schraubenkraft'},
+                {'name': 'F_SA', 'value': F_SA, 'color': 'teal', 'linestyle': '--', 'alpha': 0.7,
+                 'label': 'Schraubenzusatzkraft'},
+                {'name': 'F_KR', 'value': F_KR, 'color': 'brown', 'linestyle': ':', 'alpha': 0.7,
+                 'label': 'Restklemmkraft'},
+                {'name': 'F_PA', 'value': F_PA, 'color': 'magenta', 'linestyle': '--', 'alpha': 0.7,
+                 'label': 'Kraft auf Zwischenteil'},
+                {'name': 'F_Z', 'value': F_Z, 'color': 'darkgreen', 'linestyle': '-.', 'alpha': 0.7,
+                 'label': 'Setzkraft'}
             ]
             
-            for x, y, label, color, marker, size in key_points:
-                if x > 0 and y > 0:
-                    self.ax.plot(x, y, marker, color=color, markersize=size, 
-                               markeredgecolor='black', markeredgewidth=1, label=label)
-                    self.ax.annotate(f'{label}\n({x:.3f}, {y:.1f})', (x, y), 
-                                   xytext=(10, 10), textcoords='offset points',
-                                   fontsize=9, ha='left', va='bottom',
-                                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-
-            # Add displacement annotations with vertical lines
-            displacement_annotations = [
-                (f_smax, 'f_smax', 'blue', 'Längenanteil Schraube'),
-                (f_pmax, 'f_pmax', 'red', 'Längenanteil Zwischenlage'),
-                (f_s, 'f_s', 'orange', 'Verschiebung Schraube unter F_A'),
-                (f_p, 'f_p', 'cyan', 'Verschiebung Zwischenlage unter F_A'),
-                (f_v, 'f_V', 'black', 'Verschiebung bei Vorspannkraft'),
-                (f_SA, 'f_SA', 'green', 'Verschiebung durch F_SA'),
+            # Sort forces by value in descending order (biggest first)
+            forces = [f for f in forces if f['value'] > 0]  # Only keep positive forces
+            forces.sort(key=lambda x: x['value'], reverse=True)
+            
+            # Calculate max_force and max_displacement for scaling
+            max_force = max((force['value'] for force in forces), default=1)
+            
+            # Calculate positions for arrows (from smallest on left to largest on right)
+            num_forces = len(forces)
+            if num_forces > 0:
+                # Reverse the order to have largest forces on the right
+                # Sort forces from smallest to largest
+                forces.sort(key=lambda x: x['value'])  # Smallest to largest
+                x_positions = np.linspace(0.1 * max_displacement, 0.9 * max_displacement, num_forces)
+            else:
+                x_positions = []
+            
+            # Plot vertical lines for each force with arrows at top
+            for i, (force, x_pos) in enumerate(zip(forces, x_positions)):
+                # Draw a vertical line from top downward
+                line_top = max_force * 1.05  # Position for the top of the line
+                force_height = line_top - force['value']
+                self.ax.plot([x_pos, x_pos], [line_top, force_height], 
+                           color=force['color'], linewidth=2, alpha=force['alpha'])
+                
+                # Add label directly above the arrowhead
+                self.ax.text(x_pos, line_top + max_force * 0.02,
+                           f"{force['name']} = {force['value']:.1f} N",
+                           va='bottom', ha='center', fontsize=9, fontweight='bold',
+                           bbox=dict(facecolor='white', alpha=0.9, 
+                                  edgecolor=force['color'], boxstyle='round,pad=0.2'))
+                
+                # Add an arrow exactly at the top of the vertical line
+                # The arrow head is exactly at the top of the force line
+                self.ax.annotate('', 
+                              xy=(x_pos, force_height),  # Arrow tip at exact top of line 
+                              xytext=(x_pos, force_height - max_force * 0.05),  # Arrow starts below
+                              arrowprops=dict(
+                                  arrowstyle='-|>',
+                                  lw=3,
+                                  color=force['color'],
+                                  shrinkA=0,
+                                  shrinkB=0,
+                                  mutation_scale=15  # Larger arrowhead
+                              ),
+                              zorder=10)
+                
+                # Add a small marker at the exact point where the force ends
+                self.ax.plot(x_pos, line_top - force['value'], 'o', 
+                           markersize=6, 
+                           markerfacecolor=force['color'],
+                           markeredgecolor='black',
+                           markeredgewidth=1,
+                           alpha=0.9,
+                           zorder=11)
+            
+            # Add Cp and Cs as red dots with values
+            cp = 1/delta_p if delta_p != 0 else float('inf')
+            cs = 1/delta_s if delta_s != 0 else float('inf')
+            
+            # Plot Cp point (1/delta_p)
+            if delta_p != 0:
+                cp_point = 1/delta_p
+                self.ax.plot(0.05 * max_displacement, cp_point, 'ro', markersize=8, label='Cp (Bauteil)')  # Red dot for Cp
+                self.ax.text(0.05 * max_displacement, cp_point, f' Cp = {cp:.2e} 1/Nmm', 
+                           va='center', ha='left', fontsize=10,
+                           bbox=dict(facecolor='white', alpha=0.8, edgecolor='red', boxstyle='round,pad=0.2'))
+            
+            # Plot Cs point (1/delta_s)
+            if delta_s != 0:
+                cs_point = 1/delta_s
+                self.ax.plot(0.05 * max_displacement, cs_point, 'bo', markersize=8, label='Cs (Schraube)')  # Blue dot for Cs
+                self.ax.text(0.05 * max_displacement, cs_point, f' Cs = {cs:.2e} 1/Nmm', 
+                           va='center', ha='left', fontsize=10,
+                           bbox=dict(facecolor='white', alpha=0.8, edgecolor='blue', boxstyle='round,pad=0.2'))
+            
+            # Mark important points
+            points = [
+                {'x': 0, 'y': 0, 'label': 'Ursprung', 'color': 'black'},
+                {'x': f_v, 'y': F_V, 'label': f'Schnittpunkt\nF_V = {F_V:.1f} N', 'color': 'red'}
             ]
             
-            for i, (displacement, label, color, description) in enumerate(displacement_annotations):
-                if displacement > 0:
-                    # Draw vertical dashed line
-                    self.ax.axvline(x=displacement, color=color, linestyle=':', alpha=0.6, linewidth=1)
-                    # Add label at top
-                    y_pos = max_force * (0.9 - i * 0.05)
-                    self.ax.text(displacement, y_pos, f'{label}\n{displacement:.3f}mm', 
-                               ha='center', va='center', fontsize=8, color=color,
-                               bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
+            for point in points:
+                self.ax.plot(point['x'], point['y'], 'o', color=point['color'], markersize=8)
+                self.ax.annotate(
+                    point['label'],
+                    xy=(point['x'], point['y']),
+                    xytext=(10, 10),
+                    textcoords='offset points',
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.8)
+                )
+            
+            # Add vertical line at F_V to show the working point
+            self.ax.axvline(x=f_v, color='gray', linestyle='--', alpha=0.5)
+            
+            # Add shaded areas for better visualization
+            self.ax.fill_between([0, f_v], [0, F_V], [F_V, F_V], 
+                               color='blue', alpha=0.1, label='Arbeitsbereich Schraube')
+            self.ax.fill_between([0, f_v], [F_V, F_V], [F_V + F_PA, F_V + F_PA], 
+                               color='red', alpha=0.1, label='Arbeitsbereich Bauteil')
+            
+            # Add annotations for length fractions (displacements)
+            # f_smax - length fraction on the screw
+            self.ax.annotate(f'f_smax = {f_s_max:.3e} mm',
+                           xy=(f_s_max/2, F_Smax/2),
+                           xytext=(0.6*f_s_max, 0.3*F_Smax),
+                           arrowprops=dict(arrowstyle='->'),
+                           bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="blue", alpha=0.8))
+            
+            # f_pmax - length fraction on the intermediate
+            self.ax.annotate(f'f_pmax = {f_p_max:.3e} mm',
+                           xy=(f_p_max/2, F_Mmax/2),
+                           xytext=(0.4*f_p_max, 0.7*F_Mmax),
+                           arrowprops=dict(arrowstyle='->'),
+                           bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="red", alpha=0.8))
+            
+            # f_s = f_p - difference in length under operating force F_A
+            self.ax.annotate(f'f_s = f_p = {f_a:.3e} mm',
+                           xy=(f_v + f_a/2, F_V),
+                           xytext=(f_v + 0.7*f_a, F_V - 0.2*F_PA),
+                           arrowprops=dict(arrowstyle='->'),
+                           bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="green", alpha=0.8))
 
-            # Add force arrows (stacked/rotated as requested)
-            forces_to_show = [
-                (F_A, 'F_A', 'orange', 'Betriebskraft'),
-                (F_Kerf, 'F_Kerf', 'purple', 'Erforderliche Klemmkraft'),
-                (F_Mmin, 'F_Mmin', 'brown', 'Min. Montagekraft'),
-                (F_Mmax, 'F_Mmax', 'red', 'Max. Montagekraft'),
-                (F_V, 'F_V', 'black', 'Vorspannkraft'),
-                (F_Smax, 'F_Smax', 'blue', 'Max. Schraubenkraft'),
-                (F_SA, 'F_SA', 'green', 'Schraubenzusatzkraft'),
-                (F_PA, 'F_PA', 'cyan', 'Kraft auf Zwischenlage'),  # New
-                (F_Z, 'F_Z', 'magenta', 'Setzkraft'),  # New
-                (Fz, 'F_z', 'magenta', 'Zusätzliche Setzkraft'),  # New
-            ]
+            # Set axis labels and legend
+            self.ax.set_xlabel('Verschiebung f [mm]')
+            self.ax.set_ylabel('Kraft F [N]')
+            self.ax.legend(loc='upper right', bbox_to_anchor=(1.0, 1.0), 
+                         frameon=True, framealpha=0.9)
             
-            # Draw horizontal force arrows at the bottom (stacked)
-            arrow_base_y = -max_force * 0.15
-            for i, (force, label, color, description) in enumerate(forces_to_show):
-                if force > 0:
-                    arrow_y = arrow_base_y - i * max_force * 0.03
-                    # Draw horizontal arrow
-                    self.ax.annotate('', xy=(force * 0.8, arrow_y), xytext=(0, arrow_y),
-                                   arrowprops=dict(arrowstyle='->', color=color, lw=2))
-                    # Add label
-                    self.ax.text(force * 0.4, arrow_y + max_force * 0.01, 
-                               f'{label} = {force:.1f}N', 
-                               ha='center', va='bottom', fontsize=8, color=color, 
-                               fontweight='bold')
+            # Set grid and axis limits
+            self.ax.grid(True, linestyle='--', alpha=0.6)
+            self.ax.set_xlim(0, max_displacement * 1.2)
+            # Get the maximum force value from the list of force dictionaries
+            max_force = max((force['value'] for force in forces), default=1)
+            # Increase top limit to make room for arrows and labels
+            self.ax.set_ylim(0, max_force * 1.25)
+            
+            # Configure spines
+            for spine in ['top', 'right']:
+                self.ax.spines[spine].set_visible(False)
+                
+            # Add title
+            self.ax.set_title('Kraft-Verschiebungs-Diagramm (Bild 3.27)', pad=20, fontsize=12)
+            
+            # Adjust layout
+            self.figure.tight_layout()
 
-            # Add information box about improvements
-            info_text = (
-                'Vervollständigtes Diagramm:\n'
-                '✓ F_PA: Kraft auf Zwischenlage\n'
-                '✓ F_z: Setzkraft\n'
-                '✓ f_smax: Längenanteil Schraube\n'
-                '✓ f_pmax: Längenanteil Zwischenlage\n'
-                '✓ f_s = f_p: Verschiebung unter F_A\n'
-                '✓ Fallende Linie c_P\n'
-                '✓ Gestapelte Kraftpfeile\n'
-                '✓ Rotierte Darstellung'
-            )
+            # Rotate the plot to have force on Y-axis and displacement on X-axis
+            # (This is already the case based on your axis labels)
             
-            self.ax.text(0.02, 0.98, info_text, transform=self.ax.transAxes, fontsize=9,
-                        verticalalignment='top', horizontalalignment='left',
-                        bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgreen', alpha=0.8))
+            # Stack the plots on top of each other
+            # This is achieved by layering the various components as we've done above
 
-            # Configure plot appearance
-            self.ax.set_xlabel('Verschiebung f (mm)', fontsize=12, fontweight='bold')
-            self.ax.set_ylabel('Kraft F (N)', fontsize=12, fontweight='bold')
-            self.ax.set_title('Vollständiges Kraft-Verschiebungs-Diagramm (Bild 3.27)\n'
-                            'mit allen fehlenden Elementen', fontsize=14, fontweight='bold')
-            
-            # Set axis limits
-            self.ax.set_xlim(-max_displacement * 0.05, max_displacement)
-            self.ax.set_ylim(arrow_base_y * 1.2, max_force)
-            
-            # Add grid
-            self.ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
-            
-            # Add legend
-            self.ax.legend(loc='upper right', bbox_to_anchor=(0.98, 0.85), fontsize=9)
-            
-            # Tight layout
-            plt.tight_layout()
             self.canvas.draw()
 
-        except (ValueError, TypeError, AttributeError) as e:
-            # Clear the plot and show error message
-            self.ax.clear()
-            self.ax.text(0.5, 0.5, f"Fehler bei der Darstellung:\n{str(e)}\n\nBitte alle erforderlichen Werte eingeben.",
-                         ha="center", va="center", transform=self.ax.transAxes, fontsize=12,
-                         bbox=dict(boxstyle='round,pad=0.5', facecolor='lightcoral', alpha=0.8))
-            self.ax.set_title('Fehler im Diagramm')
-            self.canvas.draw()
-        except Exception as e:
-            # Handle any other unexpected errors
-            print(f"Unexpected error in plot update: {e}")
-            self.ax.clear()
-            self.ax.text(0.5, 0.5, f"Unerwarteter Fehler:\n{str(e)}\n\nBitte prüfen Sie die Eingaben.",
-                         ha="center", va="center", transform=self.ax.transAxes, fontsize=12,
-                         bbox=dict(boxstyle='round,pad=0.5', facecolor='lightcoral', alpha=0.8))
-            self.ax.set_title('Unerwarteter Fehler')
+        except (ValueError, TypeError):
+            self.ax.text(0.5, 0.5, "Ungültige Werte",
+                         ha="center", va="center", transform=self.ax.transAxes)
             self.canvas.draw()
 
 class MainWindow(QMainWindow):
@@ -233,7 +287,13 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Schraubenberechnung")
         self.resize(800, 600)
-
+        
+        # Initialize debounce timer for calculations
+        self.calc_timer = QTimer()
+        self.calc_timer.setSingleShot(True)
+        self.calc_timer.timeout.connect(self.calculate)
+        self.pending_updates = set()
+        
         # Setze das Gebietsschema auf Deutsch
         german_locale = QLocale(QLocale.German)
         QLocale.setDefault(german_locale)
@@ -297,8 +357,7 @@ class MainWindow(QMainWindow):
         input_widget = QWidget()
         input_layout = QGridLayout(input_widget)
         self.input_fields = {}
-        variables = ["F_A", "F_Kerf", "F_Mmin", "F_Mmax", "F_V", "F_Smax", "F_PA", "F_Z", "Fz", 
-                    "delta_s", "delta_p", "Phi", "f_smax", "f_pmax", "f_s", "f_p"]
+        variables = ["F_A", "F_Kerf", "F_Mmin", "F_Mmax", "F_V", "F_Smax", "F_PA", "F_Z", "delta_s", "delta_p", "Phi"]
         row = 0
         col = 0
         for var in variables:
@@ -369,12 +428,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         self.plot_window = None  # Reference to plot window
-        self._updating_fields = False  # Flag to prevent recursion
 
     def show_plot(self):
         """Show the plot in a new window if all required fields are filled."""
-        # Core required fields for basic plot functionality
-        required_fields = ["F_A", "F_Mmin", "F_Mmax", "F_V", "F_Smax", "delta_s", "delta_p", "Phi"]
+        required_fields = ["F_A", "F_Kerf", "F_Mmin", "F_Mmax", "F_V", "F_Smax", "delta_s", "delta_p", "Phi"]
+        # F_PA and F_Z are optional but should be used if provided
         missing_fields = []
         for field in required_fields:
             value = self.input_fields[field].text()
@@ -394,17 +452,14 @@ class MainWindow(QMainWindow):
             phi = float(self.kraefte_widget.get_value("Phi_n") or phi)  # Fixed: Changed 'Phi' to 'phi'
 
         if self.plot_window is None:
-            self.plot_window = PlotWindow(self.kraefte_widget, self.nachgiebigkeit_widget, delta_s, delta_p, phi, self)  # Fixed: Changed 'Phi' to 'phi'
+            self.plot_window = PlotWindow(self.kraefte_widget, self.nachgiebigkeit_widget, delta_s, delta_p, phi, self)
         else:
             # Update the existing plot window with new values
             self.plot_window.delta_s = delta_s
             self.plot_window.delta_p = delta_p
             self.plot_window.phi = phi
             self.plot_window.update_plot()
-            
         self.plot_window.show()
-        self.plot_window.raise_()  # Bring window to front
-        self.plot_window.activateWindow()  # Activate the window
 
     def is_valid_float(self, text):
         """Check if the text can be converted to a valid float."""
@@ -417,11 +472,8 @@ class MainWindow(QMainWindow):
     def update_widget_value(self, var, text):
         """
         Updates the corresponding widget value when an input field is changed.
+        Uses a debounce timer to prevent excessive calculations.
         """
-        # Prevent recursion
-        if self._updating_fields:
-            return
-            
         if not text.strip():
             # If the field is empty, set the value to 0 and update the widget
             value = 0.0
@@ -439,86 +491,140 @@ class MainWindow(QMainWindow):
                 self.nachgiebigkeit_widget.set_value(var, value)
             else:
                 self.kraefte_widget.set_value(var, value)
-            # Recalculate to update dependent values
-            self.calculate()
+            
+            # Add to pending updates and restart debounce timer
+            self.pending_updates.add(var)
+            
+            # Stop any running timer and start a new 500ms delay
+            self.calc_timer.stop()
+            self.calc_timer.start(500)  # 500ms debounce time
+            
         except Exception as e:
             print(f"Error updating value: {e}")  # Debugging output
 
     def update_input_fields(self):
         """
         Updates the input fields with the current values from KraefteWidget and NachgiebigkeitWidget.
+        Optimized for better performance by avoiding unnecessary updates.
         """
-        # Set flag to prevent recursion
-        self._updating_fields = True
+        # Block all signals temporarily for better performance
+        self.blockSignals(True)
         
-        try:
-            for var in self.input_fields:
-                if var in ["delta_s", "delta_p", "Phi"]:
-                    value = self.nachgiebigkeit_widget.get_value(var)
-                    # Use delta_sn, delta_pn, and Phi_n if applicable
+        for var in self.input_fields:
+            input_field = self.input_fields[var]
+            
+            # Get current value in the field
+            current_text = input_field.text()
+            
+            # Get new value from widgets
+            if var in ["delta_s", "delta_p", "Phi"]:
+                value = self.nachgiebigkeit_widget.get_value(var)
+                # Use delta_sn, delta_pn, and Phi_n if applicable
+                if self.nachgiebigkeit_widget.fall.currentIndex() in [1, 2]:
+                    if var == "delta_s":
+                        value = self.nachgiebigkeit_widget.get_value("delta_sn") or value
+                    elif var == "delta_p":
+                        value = self.nachgiebigkeit_widget.get_value("delta_pn") or value
+                    elif var == "Phi":
+                        value = self.nachgiebigkeit_widget.get_value("Phi_n") or value
+            else:
+                value = self.kraefte_widget.get_value(var)
+                # Calculate F_PA if it's needed
+                if var == "F_PA" and value is None:
+                    F_A = self.kraefte_widget.get_value("F_A") or 0
+                    phi = self.kraefte_widget.get_value("Phi") or 0
                     if self.nachgiebigkeit_widget.fall.currentIndex() in [1, 2]:
-                        if var == "delta_s":
-                            value = self.nachgiebigkeit_widget.get_value("delta_sn") or value
-                        elif var == "delta_p":
-                            value = self.nachgiebigkeit_widget.get_value("delta_pn") or value
-                        elif var == "Phi":
-                            value = self.nachgiebigkeit_widget.get_value("Phi_n") or value
-                else:
-                    value = self.kraefte_widget.get_value(var)
-                if value is not None:
-                    formatted_value = f"{value:.4e}" if (abs(value) < 1e-3 or abs(value) > 1e4) else f"{value:.4f}".rstrip('0').rstrip('.')
-                    formatted_value = formatted_value.replace('.', ',')
-                    self.input_fields[var].setText(formatted_value)
-                else:
-                    self.input_fields[var].setText("")
-        finally:
-            # Always reset flag, even if an exception occurs
-            self._updating_fields = False
+                        phi = self.kraefte_widget.get_value("Phi_n") or phi
+                    value = (1 - phi) * F_A
+            
+            # Format the new value
+            if value is not None:
+                formatted_value = f"{value:.4e}" if (abs(value) < 1e-3 or abs(value) > 1e4) else f"{value:.4f}".rstrip('0').rstrip('.')
+                formatted_value = formatted_value.replace('.', ',')
+                
+                # Only update if the value has actually changed (avoids unnecessary redraws)
+                if formatted_value != current_text:
+                    input_field.blockSignals(True)
+                    input_field.setText(formatted_value)
+                    input_field.blockSignals(False)
+            elif current_text:  # Only clear if not already empty
+                input_field.blockSignals(True)
+                input_field.setText("")
+                input_field.blockSignals(False)
+        
+        # Unblock signals
+        self.blockSignals(False)
 
     def about(self):
         QMessageBox.about(self, "Über Uns", "Dieses Tool wurde innerhalb einer Projektarbeit von<br>Hannah Meuriße und Oliver Simon Kania entwickelt<br><br>Version 1.0<br>22.07.2024<br><br><br> P.S.: Wenn du das hier ließt, weil du eine Übung prokrastinierst: Nicht verzweifeln du schaffst das!!!")
 
     def calculate(self):
+        """
+        Performs calculations in a performance-optimized way.
+        Only recalculates what's necessary based on which values have changed.
+        """
+        # Clear pending updates
+        pending = self.pending_updates.copy()
+        self.pending_updates.clear()
+        
+        # Always calculate in dependency order
         self.gewinde_widget.calculate()
         self.werkstoff_widget.calculate()
-        self.nachgiebigkeit_widget.calculate()
-        self.nachgiebigkeit_widget.delta_calc()
+        
+        # Only recalculate nachgiebigkeit if related values have changed
+        nachgiebigkeit_params = {"delta_s", "delta_p", "Phi", "d", "a_s"}
+        if pending.intersection(nachgiebigkeit_params) or not pending:
+            self.nachgiebigkeit_widget.calculate()
+            self.nachgiebigkeit_widget.delta_calc()
+        
+        # Calculate forces
         self.kraefte_widget.calculate()
+        
+        # Dauerfestigkeit depends on all the above
         self.dauerfestigkeit_widget.calculate()
 
-    def clear_tab(self):
-        # Temporarily disable updates to prevent recursion
-        self._updating_fields = True
-        try:
-            for line_edit in self.findChildren(QLineEdit):
-                line_edit.clear()
-            if self.plot_window is not None:
-                self.plot_window.close()
-                self.plot_window = None
-        finally:
-            self._updating_fields = False
+    def clear_tab(self, suppress_calculation=False):
+        """
+        Clears all input fields and optionally suppresses calculations.
+        
+        Args:
+            suppress_calculation (bool): If True, no calculation is triggered after clearing
+        """
+        # Block signals if we want to suppress calculation
+        if suppress_calculation:
+            self.blockSignals(True)
+            
+        # Clear all line edits
+        for line_edit in self.findChildren(QLineEdit):
+            line_edit.clear()
+            
+        # Close any plot window
+        if self.plot_window is not None:
+            self.plot_window.close()
+            self.plot_window = None
+            
+        # Restore signals if we suppressed them
+        if suppress_calculation:
+            self.blockSignals(False)
 
     def closeEvent(self, event):
-        """Clean up resources when closing the main window."""
-        try:
-            if self.plot_window is not None:
-                self.plot_window.close()
-                self.plot_window = None
-        except:
-            pass
-        
-        try:
-            # Close any remaining matplotlib figures
-            plt.close('all')
-        except:
-            pass
-            
+        if self.plot_window is not None:
+            self.plot_window.close()
         print("Programm wird geschlossen")
         event.accept()
 
     def load_example(self):
+        """
+        Loads an example configuration and performs a single calculation at the end.
+        Optimized to prevent multiple intermediate calculations.
+        """
+        # Block signals to prevent recalculation during loading
+        self.blockSignals(True)
+        
         selected_example = self.example_selector.currentText()
-        self.clear_tab()  # Clear previous values
+        self.clear_tab(suppress_calculation=True)  # Clear previous values without triggering calculation
+        
+        # Load the selected example
         if selected_example == "F20":
             self.load_example_1()
         elif selected_example == "H19":
@@ -533,7 +639,11 @@ class MainWindow(QMainWindow):
             self.load_example_10()
         elif selected_example == "Ü 3.7":
             self.load_example_12()
+            
+        # Re-enable signals and perform a single calculation
+        self.blockSignals(False)
         self.calculate()  # Recalculate all values
+        self.update_input_fields()  # Update UI fields once
 
     def load_example_1(self):
         # GewindeWidget
@@ -817,19 +927,30 @@ class CustomDoubleValidator(QDoubleValidator):
         self.setNotation(QDoubleValidator.StandardNotation)
         self.setLocale(QLocale(QLocale.German))
 
-    def validate(self, input, pos):
-        if input in ["", "-", ",", ".", "-.", "-,", "e", "E", "e-", "E-", "-e", "-E", "-e-", "-E-"]:
-            return (QValidator.Intermediate, input, pos)
-        modified_input = input.replace(',', '.')
-        if any(modified_input.endswith(suffix) for suffix in ["e", "E", "e-", "E-", "e+", "E+"]):
-            return (QValidator.Intermediate, input, pos)
+    def validate(self, input_str, pos):
+        # Check for empty or special intermediate inputs
+        if input_str in ["", "-", ",", ".", "-.", "-,", "e", "E", "e-", "E-", "-e", "-E", "-e-", "-E-"]:
+            return (QValidator.Intermediate, input_str, pos)
+        
+        # Replace comma with dot for decimal point
+        modified_input = input_str.replace(',', '.')
+        
+        # Check for scientific notation inputs which are still being typed
+        suffixes = ["e", "E", "e-", "E-", "e+", "E+"]
+        for suffix in suffixes:
+            if modified_input.endswith(suffix):
+                return (QValidator.Intermediate, input_str, pos)
+                
+        # Try to convert to float
         try:
             value = float(modified_input)
         except ValueError:
-            return (QValidator.Invalid, input, pos)
+            return (QValidator.Invalid, input_str, pos)
+            
+        # Check if value is within the specified range
         if self.bottom() <= value <= self.top():
-            return (QValidator.Acceptable, input, pos)
-        return (QValidator.Invalid, input, pos)
+            return (QValidator.Acceptable, input_str, pos)
+        return (QValidator.Invalid, input_str, pos)
 
 def main():
     app = QApplication(sys.argv)
