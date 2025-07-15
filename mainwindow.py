@@ -1,7 +1,10 @@
 import sys, re
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.text
+from matplotlib.lines import Line2D
 from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QGridLayout, QTabWidget, QWidget, QComboBox, QVBoxLayout, QPushButton, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpacerItem, QSizePolicy, QGroupBox
 from PyQt5.QtGui import QDoubleValidator, QValidator
 from PyQt5.QtCore import Qt, QLocale, QTimer
@@ -17,6 +20,7 @@ from nachgiebigkeit import SvgWidget
 class PlotWindow(QMainWindow):
     """Separates Fenster zur Anzeige des Kraft-Weg-Diagramms."""
     def __init__(self, kraefte_widget, nachgiebigkeit_widget, delta_s, delta_p, phi, parent=None):
+        print("PlotWindow initialized - Debug check")
         super().__init__(parent)
         self.setWindowTitle("Kraft-Verschiebungs-Diagramm (Bild 3.27)")
         self.resize(800, 600)
@@ -30,19 +34,24 @@ class PlotWindow(QMainWindow):
         central_widget = QWidget()
         layout = QVBoxLayout(central_widget)
 
-        # Matplotlib canvas
-        self.figure, self.ax = plt.subplots()
+        # Matplotlib canvas with larger figure size for better visibility
+        # Use a 4:3 aspect ratio which works better for most diagrams
+        self.figure = plt.figure(figsize=(10, 7.5), dpi=100)
+        self.ax = self.figure.add_subplot(111)
         self.canvas = FigureCanvas(self.figure)
-        self.canvas.setMinimumHeight(400)
+        self.canvas.setMinimumHeight(500)  # Increase minimum height
+        
+        # Add widgets to layout
+        layout.addWidget(self.canvas)
         
         # Calculate values for the plot
         self.update_plot()
         
-        layout.addWidget(self.canvas)
         self.setCentralWidget(central_widget)
         
     def update_plot(self):
         """Update the force-displacement diagram with displacement on X-axis and force on Y-axis."""
+        print("update_plot method called - Debug check")
         self.ax.clear()
 
         try:
@@ -75,25 +84,43 @@ class PlotWindow(QMainWindow):
             delta_ges = delta_s + delta_p
             f_smax_total = F_Smax * delta_ges  # Total displacement at F_Smax
 
+            # Calculate max_displacement early
+            max_displacement = max(f_s_max, f_p_max, f_smax_total, 1e-6)
+
             # Plot spring characteristics with displacement on X-axis and force on Y-axis
             # Schraube (screw) line - blue - fixed from origin
-            self.ax.plot([0, f_s_max], [0, F_Smax], 'b-', linewidth=2, label=f'Cs = {1/delta_s:.2e} 1/Nmm')
-            
-            # Bauteil (part) line - red - fixed from origin
-            self.ax.plot([0, f_p_max], [0, F_Mmax], 'r-', linewidth=2, label=f'Cp = {1/delta_p:.2e} 1/Nmm')
-            
+            self.ax.plot([0, f_s_max], [0, F_Smax], 'b-', linewidth=2, label=f'Schraubenlinie (Cs)')
+
             # Extended Schraube line (dashed)
             self.ax.plot([f_v, f_smax_total], [F_V, F_Smax], 'b--', linewidth=1.5)
 
             # Add second sloping line for c-p insertion (red dashed)
-            # This is the falling/negative slope line for the clamped parts
             self.ax.plot([f_v, f_v + f_a], [F_V, F_V - F_PA], 'r--', linewidth=1.5, 
-                       label='Entlastungslinie Bauteil')
+                         label='Entlastungslinie Bauteil')            # === Draw Cs and Cp lines with a clear intersection point like in the screenshot ===
+            # Calculate the stiffness values (spring constants)
+            cs_value = 1/delta_s if delta_s != 0 else float('inf')  # N/mm
+            cp_value = 1/delta_p if delta_p != 0 else float('inf')  # N/mm
             
+            # Calculate intersection point at F_V
+            f_v_intersection = F_V / cs_value  # Displacement at preload force
+            
+            # Define range for better visualization
+            x_max = f_v_intersection * 3.0  # Extend to show more of the lines
+            
+            # Draw Cs line (blue) - from origin to intersection point
+            x_cs = np.array([0, f_v_intersection])
+            y_cs = cs_value * x_cs
+            self.ax.plot(x_cs, y_cs, 'b-', linewidth=2.5, label='c_S (Schraube)')
+            
+            # Draw Cp line (red) - from intersection point outward with negative slope
+            x_cp_end = x_max
+            x_cp = np.array([f_v_intersection, x_cp_end])
+            y_cp = F_V - cp_value * (x_cp - f_v_intersection)  # Negative slope from F_V
+            self.ax.plot(x_cp, y_cp, 'r-', linewidth=2.5, label='c_P (Bauteil)')
+
             # Calculate additional points for better visualization
-            max_displacement = max(f_s_max, f_p_max, f_smax_total, 1e-6)
             x_annotate = max_displacement * 1.1  # Position for annotations on the right
-            
+
             # Define all forces to display with their styles and labels
             forces = [
                 {'name': 'F_A', 'value': F_A, 'color': 'green', 'linestyle': '--', 'alpha': 0.7,
@@ -117,44 +144,64 @@ class PlotWindow(QMainWindow):
                 {'name': 'F_Z', 'value': F_Z, 'color': 'darkgreen', 'linestyle': '-.', 'alpha': 0.7,
                  'label': 'Setzkraft'}
             ]
-            
-            # Sort forces by value in descending order (biggest first)
+
+            # Sort forces by value (smallest to largest)
             forces = [f for f in forces if f['value'] > 0]  # Only keep positive forces
-            forces.sort(key=lambda x: x['value'], reverse=True)
-            
-            # Calculate max_force and max_displacement for scaling
+            forces.sort(key=lambda x: x['value'])  # Sort from smallest to largest
+
+            # Calculate max_force for scaling
             max_force = max((force['value'] for force in forces), default=1)
-            
-            # Calculate positions for arrows (from smallest on left to largest on right)
+            # Increase max_force slightly to provide space for labels
+            max_force = max_force * 1.2
+
+            # Calculate positions for arrows in a more spread out pattern
+            # Using non-linear spacing to avoid overcrowding
             num_forces = len(forces)
             if num_forces > 0:
-                # Reverse the order to have largest forces on the right
-                # Sort forces from smallest to largest
-                forces.sort(key=lambda x: x['value'])  # Smallest to largest
-                x_positions = np.linspace(0.1 * max_displacement, 0.9 * max_displacement, num_forces)
+                # Use logarithmic spacing for better distribution with many forces
+                if num_forces > 5:
+                    x_positions = np.logspace(np.log10(0.1 * max_displacement), 
+                                           np.log10(0.9 * max_displacement), 
+                                           num_forces)
+                else:
+                    # For fewer forces, use linear spacing
+                    x_positions = np.linspace(0.1 * max_displacement, 0.9 * max_displacement, num_forces)
             else:
                 x_positions = []
+
+            # Plot vertical lines for each force at the same level as F_V (intersection point)
+            # Use F_V as the common top level for all forces
+            line_top = F_V  # Use the intersection point height for all forces
             
-            # Plot vertical lines for each force with arrows at top
+            # Use staggered heights for labels to prevent overlap but keep them above F_V
+            label_heights = []
+            for i in range(num_forces):
+                if i % 2 == 0:
+                    label_heights.append(line_top + max_force * 0.05)
+                else:
+                    label_heights.append(line_top + max_force * 0.12)
+            
             for i, (force, x_pos) in enumerate(zip(forces, x_positions)):
-                # Draw a vertical line from top downward
-                line_top = max_force * 1.05  # Position for the top of the line
-                force_height = line_top - force['value']
+                # Calculate how far below F_V this force should appear
+                force_offset = force['value'] / max_force * F_V * 0.5  # Scale force value to create visible difference
+                force_height = line_top - force_offset  # Position force arrows with smaller visual height differences
+                
+                # Draw a vertical line from F_V downward proportionally to force value
                 self.ax.plot([x_pos, x_pos], [line_top, force_height], 
                            color=force['color'], linewidth=2, alpha=force['alpha'])
-                
-                # Add label directly above the arrowhead
-                self.ax.text(x_pos, line_top + max_force * 0.02,
+
+                # Add label above the line with staggered heights to prevent overlap
+                self.ax.text(x_pos, label_heights[i],
                            f"{force['name']} = {force['value']:.1f} N",
                            va='bottom', ha='center', fontsize=9, fontweight='bold',
                            bbox=dict(facecolor='white', alpha=0.9, 
-                                  edgecolor=force['color'], boxstyle='round,pad=0.2'))
-                
-                # Add an arrow exactly at the top of the vertical line
-                # The arrow head is exactly at the top of the force line
+                                  edgecolor=force['color'], boxstyle='round,pad=0.2'),
+                           zorder=12)  # Higher zorder to ensure labels are always visible
+
+                # Add an arrow exactly at the bottom of the force line
                 self.ax.annotate('', 
-                              xy=(x_pos, force_height),  # Arrow tip at exact top of line 
-                              xytext=(x_pos, force_height - max_force * 0.05),  # Arrow starts below
+                              xy=(x_pos, force_height),  # Arrow tip at bottom of line
+                              xytext=(x_pos, line_top),  # Arrow starts at F_V level
                               arrowprops=dict(
                                   arrowstyle='-|>',
                                   lw=3,
@@ -164,42 +211,55 @@ class PlotWindow(QMainWindow):
                                   mutation_scale=15  # Larger arrowhead
                               ),
                               zorder=10)
-                
+
                 # Add a small marker at the exact point where the force ends
-                self.ax.plot(x_pos, line_top - force['value'], 'o', 
+                self.ax.plot(x_pos, force_height, 'o', 
                            markersize=6, 
                            markerfacecolor=force['color'],
                            markeredgecolor='black',
                            markeredgewidth=1,
                            alpha=0.9,
                            zorder=11)
+
+            # Calculate stiffness values
+            cs_value = 1/delta_s if delta_s != 0 else float('inf')  # Stiffness of screw
+            cp_value = 1/delta_p if delta_p != 0 else float('inf')  # Stiffness of part            # Add prominent intersection point
+            self.ax.plot(f_v_intersection, F_V, 'ro', markersize=8, zorder=12)
+            self.ax.text(f_v_intersection + x_max*0.02, F_V + max_force*0.02, 
+                      'c_P (Schnittpunkt)', color='red', fontsize=9, fontweight='bold',
+                      bbox=dict(facecolor='white', alpha=0.9, edgecolor='red', boxstyle='round,pad=0.2'))
             
-            # Add Cp and Cs as red dots with values
-            cp = 1/delta_p if delta_p != 0 else float('inf')
-            cs = 1/delta_s if delta_s != 0 else float('inf')
+            # Add vertical dashed line at intersection point
+            self.ax.plot([f_v_intersection, f_v_intersection], [0, F_V], 'gray', linestyle='--', alpha=0.7)
             
-            # Plot Cp point (1/delta_p)
-            if delta_p != 0:
-                cp_point = 1/delta_p
-                self.ax.plot(0.05 * max_displacement, cp_point, 'ro', markersize=8, label='Cp (Bauteil)')  # Red dot for Cp
-                self.ax.text(0.05 * max_displacement, cp_point, f' Cp = {cp:.2e} 1/Nmm', 
-                           va='center', ha='left', fontsize=10,
-                           bbox=dict(facecolor='white', alpha=0.8, edgecolor='red', boxstyle='round,pad=0.2'))
+            # Add markers and labels for Cs and Cp at appropriate points along the lines
+            # For Cs - point at 50% of the way to intersection
+            x_cs_point = f_v_intersection * 0.5
+            y_cs_point = cs_value * x_cs_point
             
-            # Plot Cs point (1/delta_s)
-            if delta_s != 0:
-                cs_point = 1/delta_s
-                self.ax.plot(0.05 * max_displacement, cs_point, 'bo', markersize=8, label='Cs (Schraube)')  # Blue dot for Cs
-                self.ax.text(0.05 * max_displacement, cs_point, f' Cs = {cs:.2e} 1/Nmm', 
-                           va='center', ha='left', fontsize=10,
-                           bbox=dict(facecolor='white', alpha=0.8, edgecolor='blue', boxstyle='round,pad=0.2'))
+            # For Cp - point at 50% along the Cp line
+            x_cp_point = f_v_intersection + (x_cp_end - f_v_intersection) * 0.5
+            y_cp_point = F_V - cp_value * (x_cp_point - f_v_intersection)
             
+            # Plot markers for Cs and Cp
+            self.ax.plot(x_cs_point, y_cs_point, 'bo', markersize=8, zorder=12)
+            self.ax.plot(x_cp_point, y_cp_point, 'ro', markersize=8, zorder=12)
+            
+            # Add text labels near the points
+            self.ax.text(x_cs_point, y_cs_point + max_force*0.05, f'Cs = {cs_value:.2e} N/mm', 
+                       va='bottom', ha='center', fontsize=9, fontweight='bold',
+                       bbox=dict(facecolor='white', alpha=0.9, edgecolor='blue', boxstyle='round,pad=0.2'))
+                       
+            self.ax.text(x_cp_point, y_cp_point + max_force*0.05, f'Cp = {cp_value:.2e} N/mm', 
+                       va='bottom', ha='center', fontsize=9, fontweight='bold',
+                       bbox=dict(facecolor='white', alpha=0.9, edgecolor='red', boxstyle='round,pad=0.2'))
+
             # Mark important points
             points = [
                 {'x': 0, 'y': 0, 'label': 'Ursprung', 'color': 'black'},
                 {'x': f_v, 'y': F_V, 'label': f'Schnittpunkt\nF_V = {F_V:.1f} N', 'color': 'red'}
             ]
-            
+
             for point in points:
                 self.ax.plot(point['x'], point['y'], 'o', color=point['color'], markersize=8)
                 self.ax.annotate(
@@ -209,67 +269,129 @@ class PlotWindow(QMainWindow):
                     textcoords='offset points',
                     bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="none", alpha=0.8)
                 )
-            
+
             # Add vertical line at F_V to show the working point
             self.ax.axvline(x=f_v, color='gray', linestyle='--', alpha=0.5)
-            
+
             # Add shaded areas for better visualization
             self.ax.fill_between([0, f_v], [0, F_V], [F_V, F_V], 
                                color='blue', alpha=0.1, label='Arbeitsbereich Schraube')
             self.ax.fill_between([0, f_v], [F_V, F_V], [F_V + F_PA, F_V + F_PA], 
                                color='red', alpha=0.1, label='Arbeitsbereich Bauteil')
+
+            # Add F_Z, F_A, F_V in the same vertical line
+            # Put all forces at the intersection point (f_v_intersection)
+            F_Z_height = F_V * 0.7        # Height of F_Z (y-coordinate) - proportional to F_V
             
-            # Add annotations for length fractions (displacements)
-            # f_smax - length fraction on the screw
-            self.ax.annotate(f'f_smax = {f_s_max:.3e} mm',
-                           xy=(f_s_max/2, F_Smax/2),
-                           xytext=(0.6*f_s_max, 0.3*F_Smax),
-                           arrowprops=dict(arrowstyle='->'),
-                           bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="blue", alpha=0.8))
+            # Vertical dashed line for F_Z
+            self.ax.plot([f_v_intersection, f_v_intersection], [0, F_Z_height], 'k--', linewidth=1.5, alpha=0.8)
             
-            # f_pmax - length fraction on the intermediate
-            self.ax.annotate(f'f_pmax = {f_p_max:.3e} mm',
-                           xy=(f_p_max/2, F_Mmax/2),
-                           xytext=(0.4*f_p_max, 0.7*F_Mmax),
-                           arrowprops=dict(arrowstyle='->'),
-                           bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="red", alpha=0.8))
+            # Label for F_Z
+            self.ax.text(f_v_intersection - x_max*0.1, F_Z_height, 'F_Z', 
+                       ha='right', fontsize=10, fontweight='bold',
+                       bbox=dict(facecolor='white', alpha=0.9, boxstyle='round,pad=0.2'))
             
-            # f_s = f_p - difference in length under operating force F_A
+            # Vertical arrow for F_A - now shown at the intersection point
+            F_A_height = F_Z_height + max_force * 0.1  # Position F_A above F_Z for clarity
+            self.ax.annotate('', xy=(f_v_intersection, F_Z_height), xytext=(f_v_intersection, F_A_height),
+                          arrowprops=dict(arrowstyle='<->', color='green', lw=1.5))
+            self.ax.text(f_v_intersection + x_max*0.05, F_A_height, 'F_A', 
+                       va='center', color='green', fontsize=10, fontweight='bold',
+                       bbox=dict(facecolor='white', alpha=0.9, boxstyle='round,pad=0.2'))
+            
+            # Label for intersection point (F_V)
+            self.ax.text(f_v_intersection + x_max*0.05, F_V, 'F_V', 
+                       va='center', fontsize=10, fontweight='bold',
+                       bbox=dict(facecolor='white', alpha=0.9, boxstyle='round,pad=0.2'))
+
+            # Define position for annotations outside the diagram
+            legend_x = max_displacement * 1.05  # Position outside right edge of plot
+
+            # f_s = f_p - difference in length under operating force F_A - placed outside the diagram
+            legend_y = 0.8 * max_force  # Position for the legend
             self.ax.annotate(f'f_s = f_p = {f_a:.3e} mm',
-                           xy=(f_v + f_a/2, F_V),
-                           xytext=(f_v + 0.7*f_a, F_V - 0.2*F_PA),
-                           arrowprops=dict(arrowstyle='->'),
-                           bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="green", alpha=0.8))
+                           xy=(f_v + f_a/2, F_V),  # Arrow points to the original point
+                           xytext=(legend_x, legend_y),  # Text positioned outside the diagram
+                           arrowprops=dict(arrowstyle='->', color='green', lw=1.5),
+                           bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="green", alpha=0.9),
+                           ha='left')
 
             # Set axis labels and legend
             self.ax.set_xlabel('Verschiebung f [mm]')
-            self.ax.set_ylabel('Kraft F [N]')
-            self.ax.legend(loc='upper right', bbox_to_anchor=(1.0, 1.0), 
-                         frameon=True, framealpha=0.9)
+            self.ax.set_ylabel('Kraft F [N]')            # Create a custom legend with the exact items we want to show
+            legend_elements = [
+                Line2D([0], [0], color='b', lw=2.5, label=f'c_S (Schraube)'),
+                Line2D([0], [0], color='r', lw=2.5, label=f'c_P (Bauteil)'),
+                Line2D([0], [0], color='k', linestyle='--', lw=1.5, label='F_Z'),
+                Line2D([0], [0], color='gray', linestyle='--', lw=1.5, label='Schnittpunkt')
+            ]
+            
+            # Position legend outside the plot area to avoid overlapping with other elements
+            self.ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.02, 1), 
+                         frameon=True, framealpha=0.9, borderpad=1.5, labelspacing=1.2)
             
             # Set grid and axis limits
             self.ax.grid(True, linestyle='--', alpha=0.6)
-            self.ax.set_xlim(0, max_displacement * 1.2)
-            # Get the maximum force value from the list of force dictionaries
-            max_force = max((force['value'] for force in forces), default=1)
-            # Increase top limit to make room for arrows and labels
-            self.ax.set_ylim(0, max_force * 1.25)
+            
+            # Calculate optimal axis limits based on content
+            # For x-axis: ensure enough space for all elements but not too much empty space
+            x_limit = max(x_max, max(x_positions) * 1.2) if x_positions else x_max * 1.2
+            
+            # For y-axis: ensure all force labels are visible, with more space above F_V
+            # All three forces (F_Z, F_A, F_V) are now aligned at the same vertical position
+            label_space_factor = 1.6  # Allow more space for labels above F_V
+            y_limit = max(F_V * label_space_factor, max_force * 1.4)
+            
+            # Set the limits
+            self.ax.set_xlim(0, x_limit)
+            self.ax.set_ylim(0, y_limit)
             
             # Configure spines
             for spine in ['top', 'right']:
                 self.ax.spines[spine].set_visible(False)
-                
-            # Add title
-            self.ax.set_title('Kraft-Verschiebungs-Diagramm (Bild 3.27)', pad=20, fontsize=12)
-            
-            # Adjust layout
-            self.figure.tight_layout()
 
-            # Rotate the plot to have force on Y-axis and displacement on X-axis
-            # (This is already the case based on your axis labels)
+            # Add title with less padding to save space
+            self.ax.set_title('Kraft-Verschiebungs-Diagramm', pad=10, fontsize=12)
+
+            # Create more room in the figure before applying tight_layout
+            # Get current figure size
+            fig_width, fig_height = self.figure.get_size_inches()
             
-            # Stack the plots on top of each other
-            # This is achieved by layering the various components as we've done above
+            # Make figure slightly larger and adjust aspect ratio
+            self.figure.set_size_inches(fig_width * 1.1, fig_height * 1.05)
+            
+            # Adjust layout with extra padding and more space on right for legends
+            try:
+                # First attempt with a more conservative rect
+                self.figure.tight_layout(pad=1.5, h_pad=1.0, w_pad=1.0, rect=[0, 0, 0.82, 0.95])
+            except Exception as e:
+                print(f"Warning: Could not apply tight_layout: {e}")
+                # Fall back to basic margin adjustment
+                self.figure.subplots_adjust(left=0.1, right=0.82, bottom=0.12, top=0.9)
+            
+            # Ensure all artists are within the figure bounds
+            for artist in self.ax.get_children():
+                if hasattr(artist, 'get_window_extent'):
+                    try:
+                        # Check if the artist extends outside the axes bounds
+                        bbox = artist.get_window_extent()
+                        if bbox.width == 0 or bbox.height == 0:
+                            continue  # Skip empty bboxes
+                        
+                        # If text is outside boundaries, adjust its position or fontsize
+                        if isinstance(artist, matplotlib.text.Text) and not artist.get_text().strip() == '':
+                            pos = artist.get_position()
+                            x, y = pos
+                            x_min, x_max = self.ax.get_xlim()
+                            y_min, y_max = self.ax.get_ylim()
+                            
+                            # Adjust text position if outside bounds
+                            if x > x_max * 0.95:
+                                artist.set_position((x_max * 0.95, y))
+                            if y > y_max * 0.95:
+                                artist.set_position((x, y_max * 0.95))
+                    except:
+                        pass  # Skip if can't get window extent
 
             self.canvas.draw()
 
@@ -277,6 +399,31 @@ class PlotWindow(QMainWindow):
             self.ax.text(0.5, 0.5, "Ungültige Werte",
                          ha="center", va="center", transform=self.ax.transAxes)
             self.canvas.draw()
+
+    def load_optimal_values(self):
+        """Load optimal example values for a clear, well-proportioned diagram."""
+        try:
+            # Set optimal values in the KraefteWidget
+            self.kraefte_widget.set_value("F_V", "25000")
+            self.kraefte_widget.set_value("F_A", "15000")
+            self.kraefte_widget.set_value("F_Kerf", "10000")
+            self.kraefte_widget.set_value("F_Mmin", "30000")
+            self.kraefte_widget.set_value("F_Mmax", "40000")
+            self.kraefte_widget.set_value("F_Z", "5000")
+            
+            # Set optimal compliance values 
+            # These values provide a good visualization with clear lines and intersection points
+            self.delta_s = 3e-5  # Higher compliance for screw
+            self.delta_p = 1e-5  # Lower compliance for part
+            self.phi = 0.25      # Typical phi value
+            
+            # Update the plot with the new values
+            self.update_plot()
+            
+            QMessageBox.information(self, "Optimale Darstellung", 
+                                   "Optimale Werte für eine klare Darstellung wurden geladen.")
+        except Exception as e:
+            QMessageBox.warning(self, "Fehler", f"Fehler beim Laden der optimalen Werte: {str(e)}")
 
 class MainWindow(QMainWindow):
     """
@@ -398,6 +545,7 @@ class MainWindow(QMainWindow):
         about_button = QPushButton("Über")
         clear_button = QPushButton("Leeren")
         example_button = QPushButton("Beispiel")
+        optimal_diagram_button = QPushButton("Optimales Diagramm")
 
         # Platzhalter
         spacer = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)
@@ -406,6 +554,7 @@ class MainWindow(QMainWindow):
         about_button.clicked.connect(self.about)
         clear_button.clicked.connect(self.clear_tab)
         example_button.clicked.connect(self.load_example)
+        optimal_diagram_button.clicked.connect(self.load_optimal_diagram_example)
 
         # QComboBox zur Auswahl der Beispiele
         self.example_selector = QComboBox()
@@ -419,6 +568,7 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(clear_button)
         button_layout.addWidget(self.example_selector)
         button_layout.addWidget(example_button)
+        button_layout.addWidget(optimal_diagram_button)
 
         # Den Button Container hinzufügen
         self.central_layout.addWidget(button_container)
@@ -920,6 +1070,46 @@ class MainWindow(QMainWindow):
         self.kraefte_widget.set_value("F_KR", 8000)
         self.kraefte_widget.set_value("F_A", 30918)
         self.kraefte_widget.calculate()
+
+    def load_optimal_diagram_example(self):
+        """Load optimal values for the force-displacement diagram."""
+        # This calls the set_optimal_plot_values method we already implemented
+        self.set_optimal_plot_values()
+        
+        # If the plot window is already open, update it
+        if self.plot_window is not None:
+            self.plot_window.close()
+            self.plot_window = None
+        
+        # Show the plot with the optimal values
+        self.show_plot()
+
+    def set_optimal_plot_values(self):
+        """Set optimal values for a clear, well-proportioned diagram."""
+        # Set optimal values in input fields
+        optimal_values = {
+            "F_V": "25000",
+            "F_A": "15000",
+            "F_Kerf": "10000",
+            "F_Mmin": "30000",
+            "F_Mmax": "40000", 
+            "F_Z": "5000",
+            "delta_s": "0.00003",  # 3e-5
+            "delta_p": "0.00001",  # 1e-5
+            "Phi": "0.25"
+        }
+        
+        # Update all input fields with the optimal values
+        for var, value in optimal_values.items():
+            if var in self.input_fields:
+                self.input_fields[var].setText(value)
+        
+        # Trigger calculation
+        self.calc_timer.start(100)
+        
+        # Show a message to confirm
+        QMessageBox.information(self, "Optimale Werte", 
+                               "Optimale Werte für eine klare Diagrammdarstellung wurden geladen.")
 
 class CustomDoubleValidator(QDoubleValidator):
     def __init__(self, bottom, top, decimals, parent=None):
